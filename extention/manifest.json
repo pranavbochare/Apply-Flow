@@ -1,0 +1,16 @@
+{
+  "name": "Apply Flow",
+  "description": "Helps to apply jobs automatically",
+  "version": "1.0",
+  "manifest_version": 3,
+  "action": {
+    "default_popup": "/popup/popup.html",
+    "default_icon": "images/logo.png"
+  },
+  "content_scripts": [
+    {
+      "matches": ["<all_urls>"],
+      "js": ["scripts/content.js"]
+    }
+  ]
+}
