@@ -1,11 +1,56 @@
 <!doctype html>
-<html>
+<html lang="en">
   <head>
-    <title>Apply Flow</title>
+    <meta charset="UTF-8" />
+    <title>ApplyFlow</title>
+    <link rel="stylesheet" href="popup.css" />
   </head>
   <body>
-    <h1>Apply Flow</h1>
-    <p>Welcome to the Apply Flow extension!</p>
-    <script src="./popup.js"></script>
+    <!-- Header -->
+    <div class="header">
+      <div class="logo">🚀 <span>ApplyFlow</span></div>
+      <div class="icons">⚙️ ✖</div>
+    </div>
+
+    <!-- Main Content -->
+    <div class="container">
+      <h2>Welcome!</h2>
+      <p class="subtitle">Upload your resume to auto-apply to jobs</p>
+
+      <!-- Upload Box -->
+      <div class="upload-box">
+        <div class="upload-icon">⬆️</div>
+        <p class="drag-text">Drag & Drop Resume</p>
+        <p class="or">or</p>
+
+        <label class="browse-btn">
+          Browse File
+          <input type="file" id="resumeUpload" hidden />
+        </label>
+
+        <p class="file-info">
+          .PDF, .DOC, DOCX, .TXT ± 5MB<br />
+          Max size: 5MB
+        </p>
+      </div>
+
+      <!-- Message Area -->
+      <div id="message" class="message"></div>
+
+      <!-- CTA Button -->
+      <button class="apply-btn">⚡ Start Auto-Apply Jobs</button>
+
+      <p class="footer-text">100% free — secure autofill</p>
+    </div>
+
+    <!-- Bottom Nav -->
+    <div class="bottom-nav">
+      <div>💼 Jobs</div>
+      <div>📅 Tracker</div>
+      <div>💬 AI Tools</div>
+    </div>
+
+    <script src="../libs/dexie.min.js"></script>
+    <script src="popup.js"></script>
   </body>
 </html>
