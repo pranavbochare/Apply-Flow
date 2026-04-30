@@ -1,10 +1,5 @@
 console.log("Popup script loaded");
 
-// API configuration
-const OPENROUTER_API_KEY =
-  "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";
-const MODEL = "qwen/qwen-2.5-7b-instruct";
-
 // Database will be initialized inside DOMContentLoaded
 let db;
 let dbReady = Promise.resolve(false);
