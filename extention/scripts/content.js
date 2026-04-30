@@ -1,9 +1,5 @@
 console.log("✅✅✅✅✅✅ Content script loaded");
 
-const GEMINI_MODEL = "gemini-2.0-flash-lite";
-const GEMINI_API_KEY = "AIzaSyBxD4KUkKTly0_b9VBhW5bMbq1_kO30sBc";
-const AUTO_APPLY_DB_NAME = "ApplyFlowDB";
-const FIELD_STORE_NAME = "fieldValues";
 
 // Initialize Dexie database
 const db = new Dexie(AUTO_APPLY_DB_NAME);
