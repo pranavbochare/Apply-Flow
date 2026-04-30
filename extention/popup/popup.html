@@ -25,7 +25,7 @@
 
         <label class="browse-btn">
           Browse File
-          <input type="file" id="resumeUpload" hidden />
+          <input type="file" id="resumeUpload" accept=".pdf,.txt,.doc,.docx,.rtf,application/pdf,application/msword,application/vnd.openxmlformats-officedocument.wordprocessingml.document,text/plain" hidden />
         </label>
 
         <p class="file-info">
@@ -38,7 +38,7 @@
       <div id="message" class="message"></div>
 
       <!-- CTA Button -->
-      <button class="apply-btn">⚡ Start Auto-Apply Jobs</button>
+      <button class="apply-btn" id="apply">⚡ Start Auto-Apply Jobs</button>
 
       <p class="footer-text">100% free — secure autofill</p>
     </div>
@@ -48,6 +48,20 @@
       <div>💼 Jobs</div>
       <div>📅 Tracker</div>
       <div>💬 AI Tools</div>
+    </div>
+
+    <script src="https://unpkg.com/dexie@3.2.4/dist/dexie.js"></script>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
+
+<script>
+  pdfjsLib.GlobalWorkerOptions.workerSrc =
+    "https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js";
+</script>
+
+    <!-- Scripts -->
+    <script src="../libs/dexie.min.js"></script>
+    <script src="popup.js"></script>
     </div>
 
     <script src="../libs/dexie.min.js"></script>
