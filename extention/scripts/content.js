@@ -1,5 +1,7 @@
 console.log("✅✅✅✅✅✅ Content script loaded");
 
+const AUTO_APPLY_DB_NAME = "ApplyFlowDB";
+const FIELD_STORE_NAME = "fieldValues";
 
 // Initialize Dexie database
 const db = new Dexie(AUTO_APPLY_DB_NAME);
