@@ -120,7 +120,7 @@ Instructions:
 - No explanations, no markdown, no code block.
 
 FIELDS TO EXTRACT:
-${JSON.stringify(payload.fields)}
+${payload.fields.map((field) => field.key).join(", ")}
 
 RESUME:
 ${payload.resume}
@@ -167,13 +167,55 @@ ${payload.resume}
   console.log("Extracted JSON text from LLM response:", jsonText);
 
   try {
-    return JSON.parse(extractJsonFromText(jsonText));
+    return JSON.parse(jsonText);
   } catch (err) {
     console.error("JSON parse error:", err);
     console.error("Invalid JSON text:", jsonText);
 
     throw new Error("Failed to parse LLM JSON response.");
   }
+}
+
+function findFieldElement(field) {
+  if (!field) return null;
+
+  if (field.selector) {
+    const element = document.querySelector(field.selector);
+    if (element) return element;
+  }
+
+  if (field.id) {
+    const byId = document.getElementById(field.id);
+    if (byId) return byId;
+  }
+
+  if (field.name) {
+    const byName = document.querySelector(`[name="${CSS.escape(field.name)}"]`);
+    if (byName) return byName;
+  }
+
+  if (field.placeholder) {
+    const byPlaceholder = document.querySelector(
+      `input[placeholder="${CSS.escape(field.placeholder)}"], textarea[placeholder="${CSS.escape(field.placeholder)}"]`,
+    );
+    if (byPlaceholder) return byPlaceholder;
+  }
+
+  if (field.label) {
+    const labels = Array.from(document.querySelectorAll("label"));
+    const matchingLabel = labels.find(
+      (labelEl) => labelEl.innerText.trim().toLowerCase() === field.label.trim().toLowerCase(),
+    );
+    if (matchingLabel) {
+      const fieldId = matchingLabel.getAttribute("for");
+      if (fieldId) {
+        const byLabelFor = document.getElementById(fieldId);
+        if (byLabelFor) return byLabelFor;
+      }
+    }
+  }
+
+  return null;
 }
 
 function fillInputField(element, value) {
@@ -384,47 +426,78 @@ async function promptForMissingValues(missingFields) {
       }
     }
 
-    async function fillFieldWithAI(field, resumeText) {
-      const prompt = `Extract the most relevant value from the resume for this specific field: "${field.label || field.placeholder || field.key}"
-      
-Return ONLY the extracted value or "NOTFOUND" if not found. Do not include any explanations or quotes.
+    async function fillFieldWithAI(field) {
+      try {
+        console.log("Fetching resume from chrome storage for field:", field.key);
+
+        const resumeData = await new Promise((resolve, reject) => {
+          chrome.storage.local.get(["resume"], (result) => {
+            if (chrome.runtime.lastError) {
+              reject(new Error("Failed to retrieve resume from storage"));
+            } else if (!result.resume) {
+              reject(new Error("No resume found in storage"));
+            } else {
+              resolve(result.resume);
+            }
+          });
+        });
+
+        // Convert resume data to text
+        let resumeText = "";
+        if (typeof resumeData === "string") {
+          resumeText = resumeData;
+        } else if (typeof resumeData === "object") {
+          resumeText = JSON.stringify(resumeData, null, 2);
+        }
+
+        if (!resumeText || !resumeText.trim()) {
+          throw new Error("Resume data is empty or invalid.");
+        }
+
+        console.log("Resume retrieved, calling LLM for field:", field.key);
+
+        const prompt = `
+give me only value for this application field based on the resume provided dont give extra text.
+FIELD TO EXTRACT:
+Field Name: "${field.label || field.placeholder || field.key}"
 
 RESUME:
-${resumeText}`;
+${resumeText}
+`;
 
-      try {
-        console.log("Sending request to Qwen API for field:", field.key);
         const response = await fetch("https://openrouter.ai/api/v1/chat/completions", {
           method: "POST",
           headers: {
-            Authorization:
-              "Bearer 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",
+            Authorization: `Bearer ${OPENROUTER_API_KEY}`,
             "Content-Type": "application/json",
           },
           body: JSON.stringify({
-            model: "qwen/qwen-2.5-7b-instruct",
+            model: MODEL,
             messages: [{ role: "user", content: prompt }],
+            temperature: 0.3,
           }),
         });
 
         if (!response.ok) {
-          throw new Error(`API error: ${response.status}`);
+          const txt = await response.text();
+          throw new Error(`LLM request failed: ${response.status} ${txt}`);
         }
 
         const data = await response.json();
         const value = data?.choices?.[0]?.message?.content?.trim() || "NOTFOUND";
 
-        console.log("Response from Qwen for field", field.key, ":", value);
+        console.log("Response from LLM for field", field.key, ":", value);
 
         if (value && value !== "NOTFOUND") {
           inputs[field.key].value = value;
           inputs[field.key].dispatchEvent(new Event("input", { bubbles: true }));
+          inputs[field.key].dispatchEvent(new Event("change", { bubbles: true }));
         }
 
         return value;
       } catch (error) {
-        console.error("Error calling Qwen API:", error);
-        alert("Failed to fill field with AI. Please try again or fill manually.");
+        console.error("Error in fillFieldWithAI:", error);
+        alert("Error: " + error.message);
         return "NOTFOUND";
       }
     }
@@ -463,11 +536,8 @@ ${resumeText}`;
           aiBtn.textContent = "⏳ Loading...";
           aiBtn.disabled = true;
 
-          console.log("Fetching resume for field:", field.key);
-          const resumeText = await getResumeFromDB();
-          console.log("Resume retrieved, calling AI for field:", field.key);
-
-          await fillFieldWithAI(field, resumeText);
+          console.log("AI Fill button clicked for field:", field.key);
+          await fillFieldWithAI(field);
         } catch (error) {
           console.error("Error in AI fill button:", error);
           alert("Error: " + error.message);
@@ -541,21 +611,60 @@ async function autoFillFields(extractedFields, fieldValues) {
 
   if (missingFields.length > 0) {
     const manualValues = await promptForMissingValues(missingFields);
+    const valuesToSave = {};
 
     for (const [key, value] of Object.entries(manualValues)) {
       if (value) {
         filledValues[key] = value;
-        await saveFieldValue(key, value);
+        valuesToSave[key] = value;
         const field = extractedFields.find((f) => f.key === key);
         if (field) {
-          const element = document.querySelector(field.selector);
+          const element = findFieldElement(field);
           fillInputField(element, value);
         }
       }
     }
+
+    if (Object.keys(valuesToSave).length > 0) {
+      await saveResumeFields(valuesToSave);
+    }
   }
 
   return filledValues;
+}
+
+function saveResumeFields(values) {
+  return new Promise((resolve, reject) => {
+    if (!values || Object.keys(values).length === 0) {
+      resolve();
+      return;
+    }
+
+    chrome.storage.local.get(["resume"], (result) => {
+      if (chrome.runtime.lastError) {
+        reject(new Error("Could not access chrome storage to save resume values."));
+        return;
+      }
+
+      let existingResume = result?.resume;
+      if (typeof existingResume === "string") {
+        existingResume = { rawText: existingResume };
+      }
+      if (!existingResume || typeof existingResume !== "object") {
+        existingResume = {};
+      }
+
+      const mergedResume = { ...existingResume, ...values };
+      chrome.storage.local.set({ resume: mergedResume }, () => {
+        if (chrome.runtime.lastError) {
+          reject(new Error("Failed to save resume values to storage."));
+        } else {
+          console.log("Saved manual resume fields to storage:", values);
+          resolve();
+        }
+      });
+    });
+  });
 }
 
 async function performAutoApply(resumeData) {
@@ -587,6 +696,13 @@ async function performAutoApply(resumeData) {
   });
 
   console.log("Field values from LLM:", fieldValues);
+
+  const resumeUpdates = Object.fromEntries(
+    Object.entries(fieldValues).filter(([, value]) => value && value !== "NOTFOUND"),
+  );
+  if (Object.keys(resumeUpdates).length > 0) {
+    await saveResumeFields(resumeUpdates);
+  }
 
   await autoFillFields(extractedFields, fieldValues);
   return {
