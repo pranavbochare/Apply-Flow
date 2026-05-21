@@ -5,10 +5,6 @@ import * as pdfjsLib from "../libs/pdf.min.mjs";
 // Worker path
 pdfjsLib.GlobalWorkerOptions.workerSrc = chrome.runtime.getURL("../libs/pdf.worker.min.mjs");
 
-const OPENROUTER_API_KEY =
-  "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";
-const MODEL = "qwen/qwen-2.5-7b-instruct";
-
 const resumeInput = document.getElementById("resumeUpload");
 const messageEl = document.getElementById("message");
 const applyBtn = document.getElementById("apply");

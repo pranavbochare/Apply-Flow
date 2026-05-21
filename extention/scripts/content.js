@@ -1,9 +1,5 @@
 console.log("✅✅✅✅✅✅ Content script loaded");
 
-const OPENROUTER_API_KEY =
-  "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";
-const MODEL = "qwen/qwen-2.5-7b-instruct";
-
 function findLabelText(element) {
   if (!element) return null;
 
