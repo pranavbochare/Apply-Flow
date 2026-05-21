@@ -5,8 +5,13 @@ import * as pdfjsLib from "../libs/pdf.min.mjs";
 // Worker path
 pdfjsLib.GlobalWorkerOptions.workerSrc = chrome.runtime.getURL("../libs/pdf.worker.min.mjs");
 
+const OPENROUTER_API_KEY =
+  "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";
+const MODEL = "qwen/qwen-2.5-7b-instruct";
+
 const resumeInput = document.getElementById("resumeUpload");
 const messageEl = document.getElementById("message");
+const applyBtn = document.getElementById("apply");
 
 resumeInput.addEventListener("change", () => {
   console.log("File input changed");
@@ -14,6 +19,64 @@ resumeInput.addEventListener("change", () => {
   if (file) {
     handleResumeUpload(file);
     return;
+  }
+});
+
+applyBtn.addEventListener("click", async () => {
+  try {
+    applyBtn.disabled = true;
+    showMessage("Loading resume and preparing to fill form...");
+
+    // Get resume from chrome storage
+    const resumeData = await new Promise((resolve, reject) => {
+      chrome.storage.local.get(["resume"], (result) => {
+        if (chrome.runtime.lastError) {
+          reject(new Error("Failed to retrieve resume from storage"));
+        } else if (!result.resume) {
+          reject(new Error("No resume found. Please upload your resume first."));
+        } else {
+          resolve(result.resume);
+        }
+      });
+    });
+
+    console.log("Resume retrieved from storage:", resumeData);
+
+    // Get the active tab
+    const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
+
+    if (!tab) {
+      throw new Error("No active tab found");
+    }
+
+    // Send message to content script to start auto-apply
+    chrome.tabs.sendMessage(
+      tab.id,
+      {
+        type: "START_AUTO_APPLY",
+        resumeData: resumeData,
+      },
+      (response) => {
+        if (chrome.runtime.lastError) {
+          console.error("Error sending message:", chrome.runtime.lastError);
+          showMessage(
+            `Error: ${chrome.runtime.lastError.message}. Make sure you're on a valid job application page.`,
+            true,
+          );
+          applyBtn.disabled = false;
+        } else if (response?.success) {
+          showMessage(response.message || "Application auto-filled successfully!", false);
+          applyBtn.disabled = false;
+        } else {
+          showMessage(`Error: ${response?.error || "Failed to auto-fill application"}`, true);
+          applyBtn.disabled = false;
+        }
+      },
+    );
+  } catch (error) {
+    console.error("Error in apply button:", error);
+    showMessage(error.message || "Failed to start auto-apply", true);
+    applyBtn.disabled = false;
   }
 });
 

@@ -1,45 +1,8 @@
 console.log("✅✅✅✅✅✅ Content script loaded");
 
-const AUTO_APPLY_DB_NAME = "ApplyFlowDB";
-const FIELD_STORE_NAME = "fieldValues";
-
-// Initialize Dexie database
-const db = new Dexie(AUTO_APPLY_DB_NAME);
-db.version(1).stores({
-  resumes: "id, name, createdAt",
-  fieldValues: "key",
-});
-
-console.log("Dexie database initialized:", AUTO_APPLY_DB_NAME);
-
-// Create a promise that resolves when database is ready
-let dbReady = db
-  .open()
-  .then(() => {
-    console.log("Database connection established");
-    return true;
-  })
-  .catch((error) => {
-    console.error("Failed to open database:", error);
-    return false;
-  });
-
-function getIndexedDB() {
-  return db;
-}
-
-async function saveFieldValue(key, value) {
-  // Ensure database is ready
-  await dbReady;
-
-  await db.fieldValues.put({
-    key,
-    value,
-    updatedAt: new Date().toISOString(),
-  });
-
-  console.log("Field value saved to database:", { key, value });
-}
+const OPENROUTER_API_KEY =
+  "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";
+const MODEL = "qwen/qwen-2.5-7b-instruct";
 
 function findLabelText(element) {
   if (!element) return null;
@@ -144,48 +107,77 @@ function extractJsonFromText(text) {
 }
 
 async function callGeminiApi(payload) {
-  console.log("Calling Gemini API with payload:", payload);
   const prompt = `
-You are an AI system that extracts and maps information from a resume to job application form fields.
+You are an AI resume parser.
 
-YOUR TASK:
-Extract information for each of the following fields from the resume. Return a JSON object where each key is exactly the field name and the value is the extracted information or "NOTFOUND" if not found in the resume.
+Your task is to extract values from the resume based ONLY on the provided fields.
+
+Instructions:
+- The input field names are provided in "FIELDS TO EXTRACT".
+- Create a JSON object where:
+  - key = field name from "FIELDS TO EXTRACT"
+  - value = matching information found in the resume
+- If a value is not found in the resume, return "NOTFOUND".
+- Do not create extra fields.
+- Do not rename fields.
+- Return ONLY raw JSON.
+- No explanations, no markdown, no code block.
 
 FIELDS TO EXTRACT:
-${payload.fields.map((f) => f.key).join(", ")}
-
-STRICT RULES:
-- Return ONLY a valid JSON object (no explanation, no text)
-- Keys MUST exactly match: ${payload.fields.map((f) => `"${f.key}"`).join(", ")}
-- Values MUST be extracted ONLY from the resume
-- If a field is not clearly found in the resume → value must be "NOTFOUND"
-- Preserve original formatting (emails, phone numbers, URLs)
+${JSON.stringify(payload.fields)}
 
 RESUME:
 ${payload.resume}
-
 `;
 
-  const response = await fetch("https://openrouter.ai/api/v1/chat/completions", {
+  const resp = await fetch("https://openrouter.ai/api/v1/chat/completions", {
     method: "POST",
     headers: {
-      Authorization:
-        "Bearer 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",
+      Authorization: `Bearer ${OPENROUTER_API_KEY}`,
       "Content-Type": "application/json",
     },
     body: JSON.stringify({
-      model: "qwen/qwen-2.5-7b-instruct",
+      model: MODEL,
       messages: [{ role: "user", content: prompt }],
+      temperature: 0.3,
     }),
   });
 
-  const data = await response.json();
+  if (!resp.ok) {
+    const txt = await resp.text();
+    throw new Error(`LLM request failed: ${resp.status} ${txt}`);
+  }
 
-  const outputText = data?.choices?.[0]?.message?.content || "";
+  const json = await resp.json();
 
-  console.log("response from qwen ", outputText);
+  const content =
+    json?.choices?.[0]?.message?.content ||
+    json?.choices?.[0]?.delta?.content ||
+    json?.output?.[0]?.content?.[0]?.text;
 
-  return JSON.parse(extractJsonFromText(outputText));
+  if (!content) {
+    throw new Error("No content returned from LLM.");
+  }
+
+  // Extract JSON safely
+  const firstBrace = content.indexOf("{");
+  const lastBrace = content.lastIndexOf("}");
+
+  if (firstBrace === -1 || lastBrace === -1) {
+    throw new Error("No valid JSON found in LLM response.");
+  }
+
+  const jsonText = content.slice(firstBrace, lastBrace + 1);
+  console.log("Extracted JSON text from LLM response:", jsonText);
+
+  try {
+    return JSON.parse(extractJsonFromText(jsonText));
+  } catch (err) {
+    console.error("JSON parse error:", err);
+    console.error("Invalid JSON text:", jsonText);
+
+    throw new Error("Failed to parse LLM JSON response.");
+  }
 }
 
 function fillInputField(element, value) {
@@ -571,29 +563,34 @@ async function autoFillFields(extractedFields, fieldValues) {
 }
 
 async function performAutoApply(resumeData) {
-  // Ensure database is ready
-  const isReady = await dbReady;
-  if (!isReady) {
-    throw new Error("Database is not ready. Please refresh the page and try again.");
-  }
-
   const extractedFields = extractFormFields();
   if (!extractedFields.length) {
     throw new Error("No form fields were found on this page.");
   }
 
-  console.log("Resume data received:", resumeData);
+  console.log("Extracted form fields 🎯🎯🎯🎯", extractedFields);
+  console.log("Resume data received 🎯🎯🎯🎯", resumeData);
 
-  // Use stored resume data to fill fields
-  const fieldValues = {};
-  extractedFields.forEach((field) => {
-    const value = resumeData[field.key];
-    if (value && value !== "NOTFOUND") {
-      fieldValues[field.key] = value;
-    } else {
-      fieldValues[field.key] = "NOTFOUND";
-    }
+  // Convert resume data to text for LLM processing
+  let resumeText = "";
+  if (typeof resumeData === "string") {
+    resumeText = resumeData;
+  } else if (typeof resumeData === "object") {
+    // Convert resume JSON to readable text format
+    resumeText = JSON.stringify(resumeData, null, 2);
+  }
+
+  if (!resumeText || !resumeText.trim()) {
+    throw new Error("Resume data is empty or invalid.");
+  }
+
+  // Send extracted fields and resume to LLM for intelligent mapping
+  const fieldValues = await callGeminiApi({
+    fields: extractedFields,
+    resume: resumeText,
   });
+
+  console.log("Field values from LLM:", fieldValues);
 
   await autoFillFields(extractedFields, fieldValues);
   return {
