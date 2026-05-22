@@ -4,64 +4,93 @@
     <meta charset="UTF-8" />
     <title>ApplyFlow Setup</title>
     <style>
+      :root{
+        --bg: #f4f7fb;
+        --card: #ffffff;
+        --muted: #667085;
+        --accent-1: #4a7dfc;
+        --accent-2: #3b6eea;
+      }
+      html,body{height:100%;}
       body {
         margin: 0;
-        font-family: Arial, sans-serif;
-        background: #f4f7fb;
-        color: #222;
+        font-family: Inter, system-ui, -apple-system, 'Segoe UI', Roboto, Arial, sans-serif;
+        background: var(--bg);
+        color: #111827;
+        display:flex;
+        align-items:center;
+        justify-content:center;
+        padding:24px;
+        box-sizing:border-box;
       }
       .page {
-        max-width: 480px;
-        margin: 40px auto;
-        padding: 28px;
-        background: #ffffff;
-        box-shadow: 0 16px 48px rgba(24, 42, 77, 0.08);
-        border-radius: 18px;
+        width:100%;
+        max-width:520px;
+        padding:28px 28px 32px 28px;
+        background: var(--card);
+        box-shadow: 0 8px 24px rgba(15, 23, 42, 0.06);
+        border-radius: 14px;
       }
       h1 {
-        margin: 0 0 14px;
-        font-size: 24px;
+        margin: 0 0 8px 0;
+        font-size: 22px;
+        line-height:1.15;
       }
-      p {
-        margin: 0 0 24px;
-        line-height: 1.6;
-        color: #555;
+      p.lead {
+        margin: 0 0 18px 0;
+        line-height: 1.5;
+        color: var(--muted);
+        font-size: 14px;
       }
       .field {
-        margin-bottom: 18px;
+        margin-bottom: 14px;
       }
       label {
         display: block;
         margin-bottom: 8px;
         font-weight: 600;
-        color: #333;
+        color: #0f172a;
+        font-size: 13px;
       }
       input {
         width: 100%;
         padding: 12px 14px;
-        border: 1px solid #d8e0ea;
+        border: 1px solid #e6eefc;
         border-radius: 10px;
-        font-size: 15px;
-        background: #f9fbff;
+        font-size: 14px;
+        background: #fbfdff;
+        box-sizing: border-box;
+        transition: box-shadow .12s ease, border-color .12s ease;
       }
+      input:focus{outline:none; box-shadow:0 6px 18px rgba(59,110,234,0.08); border-color:var(--accent-1);} 
+      .help {
+        margin-top: 12px;
+        padding: 12px 14px;
+        background: #f8fbff;
+        border: 1px solid #eef6ff;
+        border-radius: 10px;
+        font-size: 13px;
+        color: #334155;
+      }
+      .help a { color: var(--accent-1); text-decoration: none; font-weight: 600; }
+      .help a:hover { text-decoration: underline; }
+      ol { margin: 0 0 8px 18px; padding: 0; color: #475569; }
       button {
         width: 100%;
-        padding: 14px;
+        padding: 12px 14px;
         border: none;
         border-radius: 10px;
-        background: linear-gradient(90deg, #4a7dfc, #3b6eea);
+        background: linear-gradient(90deg, var(--accent-1), var(--accent-2));
         color: white;
         font-size: 15px;
         cursor: pointer;
+        margin-top:18px;
+        transition: transform .08s ease, box-shadow .08s ease;
       }
-      .message {
-        margin-top: 14px;
-        min-height: 24px;
-        color: #0b6623;
-      }
-      .message.error {
-        color: #b00020;
-      }
+      button:hover{ transform: translateY(-1px); box-shadow:0 10px 30px rgba(59,110,234,0.12);} 
+      .message { margin-top: 12px; min-height: 20px; color: #0b6623; font-size:13px }
+      .message.error { color: #b00020; }
+      @media (max-width:420px){ .page{ padding:20px; border-radius:12px; } h1{font-size:20px;} }
     </style>
   </head>
   <body>
@@ -76,6 +105,25 @@
       <div class="field">
         <label for="model">Model</label>
         <input id="model" type="text" placeholder="qwen/qwen-2.5-7b-instruct" autocomplete="off" />
+      </div>
+
+      <div class="help">
+        <div style="margin-bottom: 8px">
+          <strong>Need an API key?</strong> Get one from OpenRouter:
+        </div>
+        <div style="margin-bottom: 8px">
+          <a href="https://openrouter.ai" target="_blank" rel="noopener">openrouter.ai</a>
+        </div>
+        <ol style="margin: 0 0 8px 18px; padding: 0; color: #4b5563">
+          <li>Sign up / log in on OpenRouter.</li>
+          <li>Open your dashboard and create a new API key.</li>
+          <li>
+            Copy the key and paste it into the <strong>OpenRouter API Key</strong> field above.
+          </li>
+        </ol>
+        <div style="font-size: 12px; color: #667085; margin-top: 6px">
+          The model field typically looks like <em>qwen/qwen-2.5-7b-instruct</em>.
+        </div>
       </div>
 
       <button id="saveButton">Save and Continue</button>
