@@ -18,10 +18,27 @@ resumeInput.addEventListener("change", () => {
   }
 });
 
+async function getApiSettings() {
+  return new Promise((resolve, reject) => {
+    chrome.storage.local.get(["apiKey", "model"], (result) => {
+      if (chrome.runtime.lastError) {
+        reject(new Error("Failed to load API settings."));
+      } else {
+        resolve({ apiKey: result.apiKey || "", model: result.model || "" });
+      }
+    });
+  });
+}
+
 applyBtn.addEventListener("click", async () => {
   try {
     applyBtn.disabled = true;
     showMessage("Loading resume and preparing to fill form...");
+
+    const settings = await getApiSettings();
+    if (!settings.apiKey || !settings.model) {
+      throw new Error("API key or model is not configured. Please complete first-time setup.");
+    }
 
     // Get resume from chrome storage
     const resumeData = await new Promise((resolve, reject) => {
@@ -78,6 +95,11 @@ applyBtn.addEventListener("click", async () => {
 
 async function handleResumeUpload(file) {
   try {
+    const settings = await getApiSettings();
+    if (!settings.apiKey || !settings.model) {
+      throw new Error("Please save your API key and model before uploading your resume.");
+    }
+
     showMessage("Extracting resume text...");
     const resumeText = await extractTextFromPDF(file);
     console.log("Extracted Resume Text from handleResumeUpload ------------> : ", resumeText);
@@ -122,16 +144,23 @@ async function extractTextFromPDF(file) {
 }
 
 async function askLLMForResumeJSON(resumeText) {
+  const { apiKey, model } = await getApiSettings();
+  if (!apiKey || !model) {
+    throw new Error(
+      "API key or model is not configured. Please save your API settings before uploading your resume.",
+    );
+  }
+
   const prompt = `Convert the given resume text into a clean structured JSON object. Resume Text: ${resumeText}`;
 
   const resp = await fetch("https://openrouter.ai/api/v1/chat/completions", {
     method: "POST",
     headers: {
-      Authorization: `Bearer ${OPENROUTER_API_KEY}`,
+      Authorization: `Bearer ${apiKey}`,
       "Content-Type": "application/json",
     },
     body: JSON.stringify({
-      model: MODEL,
+      model: model,
       messages: [{ role: "user", content: prompt }],
       temperature: 0.3,
     }),

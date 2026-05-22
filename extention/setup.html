@@ -1,0 +1,87 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <title>ApplyFlow Setup</title>
+    <style>
+      body {
+        margin: 0;
+        font-family: Arial, sans-serif;
+        background: #f4f7fb;
+        color: #222;
+      }
+      .page {
+        max-width: 480px;
+        margin: 40px auto;
+        padding: 28px;
+        background: #ffffff;
+        box-shadow: 0 16px 48px rgba(24, 42, 77, 0.08);
+        border-radius: 18px;
+      }
+      h1 {
+        margin: 0 0 14px;
+        font-size: 24px;
+      }
+      p {
+        margin: 0 0 24px;
+        line-height: 1.6;
+        color: #555;
+      }
+      .field {
+        margin-bottom: 18px;
+      }
+      label {
+        display: block;
+        margin-bottom: 8px;
+        font-weight: 600;
+        color: #333;
+      }
+      input {
+        width: 100%;
+        padding: 12px 14px;
+        border: 1px solid #d8e0ea;
+        border-radius: 10px;
+        font-size: 15px;
+        background: #f9fbff;
+      }
+      button {
+        width: 100%;
+        padding: 14px;
+        border: none;
+        border-radius: 10px;
+        background: linear-gradient(90deg, #4a7dfc, #3b6eea);
+        color: white;
+        font-size: 15px;
+        cursor: pointer;
+      }
+      .message {
+        margin-top: 14px;
+        min-height: 24px;
+        color: #0b6623;
+      }
+      .message.error {
+        color: #b00020;
+      }
+    </style>
+  </head>
+  <body>
+    <div class="page">
+      <h1>Welcome to ApplyFlow</h1>
+      <p>Please enter your OpenRouter API key and model so the extension can work automatically.</p>
+
+      <div class="field">
+        <label for="apiKey">OpenRouter API Key</label>
+        <input id="apiKey" type="text" placeholder="sk-or-..." autocomplete="off" />
+      </div>
+      <div class="field">
+        <label for="model">Model</label>
+        <input id="model" type="text" placeholder="qwen/qwen-2.5-7b-instruct" autocomplete="off" />
+      </div>
+
+      <button id="saveButton">Save and Continue</button>
+      <div id="statusMessage" class="message"></div>
+    </div>
+
+    <script src="setup.js"></script>
+  </body>
+</html>

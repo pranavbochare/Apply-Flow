@@ -1,5 +1,17 @@
 console.log("✅✅✅✅✅✅ Content script loaded");
 
+async function getApiSettings() {
+  return new Promise((resolve, reject) => {
+    chrome.storage.local.get(["apiKey", "model"], (result) => {
+      if (chrome.runtime.lastError) {
+        reject(new Error("Failed to load API settings."));
+      } else {
+        resolve({ apiKey: result.apiKey || "", model: result.model || "" });
+      }
+    });
+  });
+}
+
 function findLabelText(element) {
   if (!element) return null;
 
@@ -126,14 +138,21 @@ RESUME:
 ${payload.resume}
 `;
 
+  const { apiKey, model } = await getApiSettings();
+  if (!apiKey || !model) {
+    throw new Error(
+      "API key or model is not configured. Please open the extension popup and save your API settings.",
+    );
+  }
+
   const resp = await fetch("https://openrouter.ai/api/v1/chat/completions", {
     method: "POST",
     headers: {
-      Authorization: `Bearer ${OPENROUTER_API_KEY}`,
+      Authorization: `Bearer ${apiKey}`,
       "Content-Type": "application/json",
     },
     body: JSON.stringify({
-      model: MODEL,
+      model: model,
       messages: [{ role: "user", content: prompt }],
       temperature: 0.3,
     }),
@@ -465,14 +484,21 @@ RESUME:
 ${resumeText}
 `;
 
+        const { apiKey, model } = await getApiSettings();
+        if (!apiKey || !model) {
+          throw new Error(
+            "API key or model is not configured. Please open the extension popup and save your API settings.",
+          );
+        }
+
         const response = await fetch("https://openrouter.ai/api/v1/chat/completions", {
           method: "POST",
           headers: {
-            Authorization: `Bearer ${OPENROUTER_API_KEY}`,
+            Authorization: `Bearer ${apiKey}`,
             "Content-Type": "application/json",
           },
           body: JSON.stringify({
-            model: MODEL,
+            model: model,
             messages: [{ role: "user", content: prompt }],
             temperature: 0.3,
           }),
