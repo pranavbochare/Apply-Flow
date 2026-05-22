@@ -1,7 +1,4 @@
-console.log("ApplyFlow background service worker loaded.");
-
 chrome.runtime.onInstalled.addListener((details) => {
-  console.log("ApplyFlow installed or updated:", details);
   if (details.reason === "install") {
     chrome.tabs.create({ url: chrome.runtime.getURL("setup.html") });
   }

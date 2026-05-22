@@ -1,5 +1,3 @@
-console.log("🚀 Popup script loaded successfully");
-
 import * as pdfjsLib from "../libs/pdf.min.mjs";
 
 // Worker path
@@ -10,7 +8,6 @@ const messageEl = document.getElementById("message");
 const applyBtn = document.getElementById("apply");
 
 resumeInput.addEventListener("change", () => {
-  console.log("File input changed");
   const file = resumeInput && resumeInput.files && resumeInput.files[0];
   if (file) {
     handleResumeUpload(file);
@@ -53,8 +50,6 @@ applyBtn.addEventListener("click", async () => {
       });
     });
 
-    console.log("Resume retrieved from storage:", resumeData);
-
     // Get the active tab
     const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
 
@@ -71,7 +66,6 @@ applyBtn.addEventListener("click", async () => {
       },
       (response) => {
         if (chrome.runtime.lastError) {
-          console.error("Error sending message:", chrome.runtime.lastError);
           showMessage(
             `Error: ${chrome.runtime.lastError.message}. Make sure you're on a valid job application page.`,
             true,
@@ -87,7 +81,6 @@ applyBtn.addEventListener("click", async () => {
       },
     );
   } catch (error) {
-    console.error("Error in apply button:", error);
     showMessage(error.message || "Failed to start auto-apply", true);
     applyBtn.disabled = false;
   }
@@ -102,7 +95,6 @@ async function handleResumeUpload(file) {
 
     showMessage("Extracting resume text...");
     const resumeText = await extractTextFromPDF(file);
-    console.log("Extracted Resume Text from handleResumeUpload ------------> : ", resumeText);
 
     if (!resumeText || !resumeText.trim()) {
       throw new Error("Could not extract any text from the resume.");
@@ -111,13 +103,10 @@ async function handleResumeUpload(file) {
     showMessage("Sending resume text to the LLM...");
     const resumeJson = await askLLMForResumeJSON(resumeText);
 
-    console.log("Parsed Resume JSON from LLM ------------> : ", resumeJson);
-
     chrome.storage.local.set({ resume: resumeJson }, () => {
       showMessage("Resume uploaded successfully.");
     });
   } catch (error) {
-    console.error(error);
     showMessage(error.message || "Resume upload failed.", true);
   }
 }
@@ -139,7 +128,6 @@ async function extractTextFromPDF(file) {
     const pageText = textContent.items.map((it) => it.str).join(" ");
     fullText += pageText + "\n\n";
   }
-  console.log("Extracted text from PDF --------> ", fullText);
   return fullText.trim();
 }
 
@@ -195,9 +183,6 @@ async function askLLMForResumeJSON(resumeText) {
   try {
     return JSON.parse(jsonText);
   } catch (err) {
-    console.error("JSON parse error:", err);
-    console.error("Invalid JSON text:", jsonText);
-
     throw new Error("Failed to parse LLM JSON response.");
   }
 }

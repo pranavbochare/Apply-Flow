@@ -1,5 +1,3 @@
-console.log("✅✅✅✅✅✅ Content script loaded");
-
 async function getApiSettings() {
   return new Promise((resolve, reject) => {
     chrome.storage.local.get(["apiKey", "model"], (result) => {
@@ -183,14 +181,10 @@ ${payload.resume}
   }
 
   const jsonText = content.slice(firstBrace, lastBrace + 1);
-  console.log("Extracted JSON text from LLM response:", jsonText);
 
   try {
     return JSON.parse(jsonText);
   } catch (err) {
-    console.error("JSON parse error:", err);
-    console.error("Invalid JSON text:", jsonText);
-
     throw new Error("Failed to parse LLM JSON response.");
   }
 }
@@ -422,33 +416,22 @@ async function promptForMissingValues(missingFields) {
           throw new Error("Database failed to initialize.");
         }
 
-        console.log("Retrieving resume from Dexie database...");
         const resume = await db.resumes.get("default");
-
-        console.log("Resume object from DB:", {
-          exists: !!resume,
-          hasFile: resume?.file ? "yes" : "no",
-          fileName: resume?.name,
-        });
 
         if (!resume || !resume.file) {
           throw new Error("No resume found in database. Please upload your resume first.");
         }
 
-        console.log("Resume retrieved successfully");
         const resumeText = getResumeText(resume.file);
         cachedResumeText = resumeText;
         return resumeText;
       } catch (error) {
-        console.error("Error retrieving resume from database:", error);
         throw error;
       }
     }
 
     async function fillFieldWithAI(field) {
       try {
-        console.log("Fetching resume from chrome storage for field:", field.key);
-
         const resumeData = await new Promise((resolve, reject) => {
           chrome.storage.local.get(["resume"], (result) => {
             if (chrome.runtime.lastError) {
@@ -472,8 +455,6 @@ async function promptForMissingValues(missingFields) {
         if (!resumeText || !resumeText.trim()) {
           throw new Error("Resume data is empty or invalid.");
         }
-
-        console.log("Resume retrieved, calling LLM for field:", field.key);
 
         const prompt = `
 give me only value for this application field based on the resume provided dont give extra text.
@@ -512,8 +493,6 @@ ${resumeText}
         const data = await response.json();
         const value = data?.choices?.[0]?.message?.content?.trim() || "NOTFOUND";
 
-        console.log("Response from LLM for field", field.key, ":", value);
-
         if (value && value !== "NOTFOUND") {
           inputs[field.key].value = value;
           inputs[field.key].dispatchEvent(new Event("input", { bubbles: true }));
@@ -522,7 +501,6 @@ ${resumeText}
 
         return value;
       } catch (error) {
-        console.error("Error in fillFieldWithAI:", error);
         alert("Error: " + error.message);
         return "NOTFOUND";
       }
@@ -562,10 +540,8 @@ ${resumeText}
           aiBtn.textContent = "⏳ Loading...";
           aiBtn.disabled = true;
 
-          console.log("AI Fill button clicked for field:", field.key);
           await fillFieldWithAI(field);
         } catch (error) {
-          console.error("Error in AI fill button:", error);
           alert("Error: " + error.message);
         } finally {
           aiBtn.classList.remove("loading");
@@ -685,7 +661,6 @@ function saveResumeFields(values) {
         if (chrome.runtime.lastError) {
           reject(new Error("Failed to save resume values to storage."));
         } else {
-          console.log("Saved manual resume fields to storage:", values);
           resolve();
         }
       });
@@ -698,9 +673,6 @@ async function performAutoApply(resumeData) {
   if (!extractedFields.length) {
     throw new Error("No form fields were found on this page.");
   }
-
-  console.log("Extracted form fields 🎯🎯🎯🎯", extractedFields);
-  console.log("Resume data received 🎯🎯🎯🎯", resumeData);
 
   // Convert resume data to text for LLM processing
   let resumeText = "";
@@ -720,8 +692,6 @@ async function performAutoApply(resumeData) {
     fields: extractedFields,
     resume: resumeText,
   });
-
-  console.log("Field values from LLM:", fieldValues);
 
   const resumeUpdates = Object.fromEntries(
     Object.entries(fieldValues).filter(([, value]) => value && value !== "NOTFOUND"),
@@ -744,13 +714,8 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   performAutoApply(message.resumeData)
     .then((result) => sendResponse(result))
     .catch((error) => {
-      console.error("Auto apply error:", error);
       sendResponse({ success: false, error: error.message || "Auto apply failed." });
     });
 
   return true;
-});
-
-window.addEventListener("load", () => {
-  console.log("Content script ready for auto apply.");
 });

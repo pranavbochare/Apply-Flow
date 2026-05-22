@@ -18,4 +18,3 @@ Extension detects application form
 Saved user information is fetched
 Fields are automatically filled
 User reviews and submits application
-
