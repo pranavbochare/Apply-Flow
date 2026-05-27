@@ -431,8 +431,22 @@ async function promptForMissingValues(missingFields) {
       }
     }
 
+    function getPageContext() {
+      const pageTitle = document.title || "";
+      const pageUrl = window.location.href || "";
+      const pageText = document.body?.innerText?.trim() || "";
+      const normalizedText = pageText.replace(/\s+/g, " ").trim();
+      return {
+        title: pageTitle,
+        url: pageUrl,
+        text: normalizedText.slice(-15000),
+      };
+    }
+
     async function fillFieldWithAI(field) {
       try {
+        const pageContext = getPageContext();
+        console.log("Page context for AI:", pageContext);
         const resumeData = await new Promise((resolve, reject) => {
           chrome.storage.local.get(["resume"], (result) => {
             if (chrome.runtime.lastError) {
@@ -458,14 +472,18 @@ async function promptForMissingValues(missingFields) {
         }
 
         const prompt = `
-give me only value for this application field based on the resume provided don't give extra text.
+give me only value for this application field based on the resume and the current page context provided. Do not give extra text.
 FIELD TO EXTRACT:
 Field Name: "${field.label || field.placeholder || field.key}"
+
+PAGE CONTEXT:
+Title: ${pageContext.title}
+URL: ${pageContext.url}
+Text: ${pageContext.text}
 
 RESUME:
 ${resumeText}
 `;
-
         const { apiKey, model } = await getApiSettings();
         if (!apiKey || !model) {
           throw new Error(
