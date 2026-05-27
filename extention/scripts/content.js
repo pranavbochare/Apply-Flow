@@ -404,6 +404,7 @@ async function promptForMissingValues(missingFields) {
     `;
 
     const inputs = {};
+    const aiFilledKeys = new Set();
     let cachedResumeText = null;
 
     async function getResumeFromDB() {
@@ -457,7 +458,7 @@ async function promptForMissingValues(missingFields) {
         }
 
         const prompt = `
-give me only value for this application field based on the resume provided dont give extra text.
+give me only value for this application field based on the resume provided don't give extra text.
 FIELD TO EXTRACT:
 Field Name: "${field.label || field.placeholder || field.key}"
 
@@ -497,9 +498,10 @@ ${resumeText}
           inputs[field.key].value = value;
           inputs[field.key].dispatchEvent(new Event("input", { bubbles: true }));
           inputs[field.key].dispatchEvent(new Event("change", { bubbles: true }));
+          aiFilledKeys.add(field.key);
         }
 
-        return value;
+        return { value: value, filledWithAi: true };
       } catch (error) {
         alert("Error: " + error.message);
         return "NOTFOUND";
@@ -582,7 +584,7 @@ ${resumeText}
       document.body.removeChild(modal);
       document.head.removeChild(style);
 
-      resolve(values);
+      resolve({ values, aiFilledKeys: Array.from(aiFilledKeys) });
     });
 
     // Close on click outside
@@ -590,7 +592,7 @@ ${resumeText}
       if (e.target === modal) {
         document.body.removeChild(modal);
         document.head.removeChild(style);
-        resolve({});
+        resolve({ values: {}, aiFilledKeys: Array.from(aiFilledKeys) });
       }
     });
   });
@@ -612,13 +614,15 @@ async function autoFillFields(extractedFields, fieldValues) {
   });
 
   if (missingFields.length > 0) {
-    const manualValues = await promptForMissingValues(missingFields);
+    const { values: manualValues, aiFilledKeys } = await promptForMissingValues(missingFields);
     const valuesToSave = {};
 
     for (const [key, value] of Object.entries(manualValues)) {
       if (value) {
         filledValues[key] = value;
-        valuesToSave[key] = value;
+        if (!aiFilledKeys.includes(key)) {
+          valuesToSave[key] = value;
+        }
         const field = extractedFields.find((f) => f.key === key);
         if (field) {
           const element = findFieldElement(field);
