@@ -619,8 +619,26 @@ ${resumeText}
 async function autoFillFields(extractedFields, fieldValues) {
   const missingFields = [];
   const filledValues = {};
+  let resumeFile = null;
+
+  try {
+    resumeFile = await getResumeFileFromIndexedDB();
+  } catch (error) {
+    console.log("No resume file available for file inputs:", error.message);
+  }
 
   extractedFields.forEach((field) => {
+    if (field.type === "file") {
+      const element = findFieldElement(field);
+      if (element && resumeFile) {
+        autoFillFileInput(element, resumeFile);
+        filledValues[field.key] = "RESUME_FILE_UPLOADED";
+      } else {
+        console.log("Skipping manual prompt for file field:", field.key);
+      }
+      return;
+    }
+
     const value = fieldValues[field.key];
     if (value && value !== "NOTFOUND") {
       filledValues[field.key] = value;
@@ -690,6 +708,125 @@ function saveResumeFields(values) {
   });
 }
 
+/**
+ * Get resume file from IndexedDB via background script
+ */
+function getResumeFileFromIndexedDB() {
+  return new Promise((resolve, reject) => {
+    chrome.runtime.sendMessage({ type: "GET_RESUME_FROM_IDB" }, (response) => {
+      if (chrome.runtime.lastError) {
+        reject(new Error("Failed to retrieve resume: " + chrome.runtime.lastError.message));
+      } else if (response?.success) {
+        // Convert the response back to a File object
+        const { fileData, fileName, fileType } = response.file;
+        const blobArray = new Uint8Array(Object.values(fileData));
+        const blob = new Blob([blobArray], { type: fileType });
+        const file = new File([blob], fileName, { type: fileType });
+        resolve(file);
+      } else {
+        reject(new Error(response?.error || "No resume found in local database"));
+      }
+    });
+  });
+}
+
+/**
+ * Find all file input elements (resume uploads) on the page
+ */
+function findFileInputs() {
+  const selectors = [
+    'input[type="file"]',
+    'input[type="file"][accept*="pdf"]',
+    'input[type="file"][accept*="doc"]',
+    'input[type="file"][accept*="resume"]',
+    'input[accept*="pdf"]',
+    'input[accept*="resume"]',
+    'input[name*="resume"]',
+    'input[name*="cv"]',
+    'input[name*="document"]',
+    'input[id*="resume"]',
+    'input[id*="cv"]',
+    'input[id*="document"]',
+  ];
+
+  const fileInputs = new Set();
+  selectors.forEach((selector) => {
+    try {
+      document.querySelectorAll(selector).forEach((input) => {
+        if (input.type === "file" && !input.disabled) {
+          fileInputs.add(input);
+        }
+      });
+    } catch (e) {
+      console.log("Invalid selector:", selector, e.message);
+    }
+  });
+
+  return Array.from(fileInputs);
+}
+
+/**
+ * Auto-fill file input with resume
+ */
+function autoFillFileInput(fileInput, file) {
+  try {
+    // Try using DataTransfer first (most reliable)
+    try {
+      const dataTransfer = new DataTransfer();
+      dataTransfer.items.add(file);
+      fileInput.files = dataTransfer.files;
+    } catch (e) {
+      // Fallback: try direct assignment
+      console.log("DataTransfer not available, trying direct assignment...");
+
+      // Create a mock File list object
+      const fileList = {
+        0: file,
+        length: 1,
+        item: function (index) {
+          return this[index] || null;
+        },
+      };
+
+      Object.defineProperty(fileInput, "files", {
+        value: fileList,
+        writable: true,
+      });
+    }
+
+    // Dispatch change and input events
+    fileInput.dispatchEvent(new Event("change", { bubbles: true }));
+    fileInput.dispatchEvent(new Event("input", { bubbles: true }));
+
+    // Also dispatch focus and blur events to ensure proper detection
+    fileInput.dispatchEvent(new Event("focus", { bubbles: true }));
+    fileInput.dispatchEvent(new Event("blur", { bubbles: true }));
+
+    console.log("Resume automatically filled in file input:", fileInput.name || fileInput.id);
+    return true;
+  } catch (error) {
+    console.log("Could not auto-fill file input:", error.message);
+    return false;
+  }
+}
+
+/**
+ * Auto-fill all detected file inputs with resume
+ */
+function autoFillAllFileInputs(file) {
+  const fileInputs = findFileInputs();
+  if (fileInputs.length === 0) {
+    console.log("No file inputs found on page");
+    return;
+  }
+
+  console.log(`Found ${fileInputs.length} file input(s), filling with resume...`);
+
+  fileInputs.forEach((fileInput) => {
+    autoFillFileInput(fileInput, file);
+  });
+}
+
 async function performAutoApply(resumeData) {
   const extractedFields = extractFormFields();
   if (!extractedFields.length) {
@@ -723,6 +860,16 @@ async function performAutoApply(resumeData) {
   }
 
   await autoFillFields(extractedFields, fieldValues);
+
+  // Auto-fill file input fields with resume from IndexedDB
+  try {
+    const resumeFile = await getResumeFileFromIndexedDB();
+    autoFillAllFileInputs(resumeFile);
+  } catch (error) {
+    console.log("Could not auto-fill file inputs:", error.message);
+    // Don't throw error - file auto-fill is optional, form fields are more important
+  }
+
   return {
     success: true,
     message:

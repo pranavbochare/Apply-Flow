@@ -1,4 +1,11 @@
 import * as pdfjsLib from "../libs/pdf.min.mjs";
+import {
+  saveResumeToIndexedDB,
+  getResumeFromIndexedDB,
+  getResumeAsFile,
+  resumeExistsInIndexedDB,
+  deleteResumeFromIndexedDB,
+} from "../libs/indexedDB.js";
 
 // Worker path
 pdfjsLib.GlobalWorkerOptions.workerSrc = chrome.runtime.getURL("../libs/pdf.worker.min.mjs");
@@ -6,6 +13,7 @@ pdfjsLib.GlobalWorkerOptions.workerSrc = chrome.runtime.getURL("../libs/pdf.work
 const resumeInput = document.getElementById("resumeUpload");
 const messageEl = document.getElementById("message");
 const applyBtn = document.getElementById("apply");
+const resumeStatusEl = document.getElementById("resumeStatus");
 
 resumeInput.addEventListener("change", () => {
   const file = resumeInput && resumeInput.files && resumeInput.files[0];
@@ -14,6 +22,53 @@ resumeInput.addEventListener("change", () => {
     return;
   }
 });
+
+// Drag and drop functionality
+const uploadBox = document.querySelector(".upload-box");
+if (uploadBox) {
+  uploadBox.addEventListener("dragover", (e) => {
+    e.preventDefault();
+    e.stopPropagation();
+    uploadBox.style.background = "#f0f4ff";
+    uploadBox.style.borderColor = "#4a7dfc";
+  });
+
+  uploadBox.addEventListener("dragleave", (e) => {
+    e.preventDefault();
+    e.stopPropagation();
+    uploadBox.style.background = "#fff";
+    uploadBox.style.borderColor = "#d0d7e2";
+  });
+
+  uploadBox.addEventListener("drop", (e) => {
+    e.preventDefault();
+    e.stopPropagation();
+    uploadBox.style.background = "#fff";
+    uploadBox.style.borderColor = "#d0d7e2";
+
+    const files = e.dataTransfer.files;
+    if (files && files.length > 0) {
+      const file = files[0];
+      if (file.type === "application/pdf" || file.name.endsWith(".pdf")) {
+        handleResumeUpload(file);
+      } else if (
+        file.type.includes("word") ||
+        file.type.includes("document") ||
+        file.name.endsWith(".doc") ||
+        file.name.endsWith(".docx")
+      ) {
+        handleResumeUpload(file);
+      } else if (file.type === "text/plain" || file.name.endsWith(".txt")) {
+        handleResumeUpload(file);
+      } else {
+        showMessage(
+          "Please upload a PDF, DOCX, DOC, or TXT file. Resume extraction is optimized for PDFs.",
+          true,
+        );
+      }
+    }
+  });
+}
 
 async function getApiSettings() {
   return new Promise((resolve, reject) => {
@@ -103,9 +158,18 @@ async function handleResumeUpload(file) {
     showMessage("Sending resume text to the LLM...");
     const resumeJson = await askLLMForResumeJSON(resumeText);
 
+    // Save to Chrome storage (for backward compatibility)
     chrome.storage.local.set({ resume: resumeJson }, () => {
-      showMessage("Resume uploaded successfully.");
+      console.log("Resume saved to Chrome storage");
     });
+
+    // Save file to IndexedDB for automatic file uploads
+    await saveResumeToIndexedDB(file, {
+      extractedText: resumeText,
+      parsedJson: resumeJson,
+    });
+
+    showMessage("Resume uploaded successfully and saved to local database.");
   } catch (error) {
     showMessage(error.message || "Resume upload failed.", true);
   }

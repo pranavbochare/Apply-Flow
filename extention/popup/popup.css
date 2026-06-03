@@ -158,3 +158,63 @@ h2 {
   border-top: 1px solid #eee;
   font-size: 12px;
 }
+
+/* Resume Status */
+.resume-status {
+  margin: 15px 0;
+}
+
+.resume-stored {
+  background: linear-gradient(135deg, #e8f5e9 0%, #f1f8e9 100%);
+  border: 1px solid #c8e6c9;
+  border-radius: 8px;
+  padding: 12px;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.status-icon {
+  font-size: 20px;
+  flex-shrink: 0;
+}
+
+.status-info {
+  flex: 1;
+  text-align: left;
+}
+
+.status-title {
+  margin: 0;
+  font-size: 13px;
+  font-weight: 600;
+  color: #2e7d32;
+}
+
+.status-details {
+  margin: 4px 0 0 0;
+  font-size: 12px;
+  color: #558b2f;
+  word-break: break-word;
+}
+
+.status-date {
+  margin: 2px 0 0 0;
+  font-size: 11px;
+  color: #7cb342;
+}
+
+.clear-btn {
+  flex-shrink: 0;
+  background: none;
+  border: none;
+  font-size: 14px;
+  cursor: pointer;
+  padding: 4px;
+  border-radius: 4px;
+  transition: all 0.2s ease;
+}
+
+.clear-btn:hover {
+  background: rgba(200, 230, 201, 0.5);
+}
