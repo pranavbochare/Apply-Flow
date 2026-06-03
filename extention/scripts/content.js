@@ -628,6 +628,7 @@ async function autoFillFields(extractedFields, fieldValues) {
   }
 
   extractedFields.forEach((field) => {
+    console.log("field ---------> ", field);
     if (field.type === "file") {
       const element = findFieldElement(field);
       if (element && resumeFile) {
@@ -639,7 +640,8 @@ async function autoFillFields(extractedFields, fieldValues) {
       return;
     }
 
-    const value = fieldValues[field.key];
+    const value = fieldValues[field.placeholder || field.key || field.label];
+    console.log(`Filling field "${field.key}" with value:`, value);
     if (value && value !== "NOTFOUND") {
       filledValues[field.key] = value;
       const element = document.querySelector(field.selector);
@@ -765,9 +767,6 @@ function findFileInputs() {
   return Array.from(fileInputs);
 }
 
-/**
- * Auto-fill file input with resume
- */
 function autoFillFileInput(fileInput, file) {
   try {
     // Try using DataTransfer first (most reliable)
@@ -829,6 +828,9 @@ function autoFillAllFileInputs(file) {
 
 async function performAutoApply(resumeData) {
   const extractedFields = extractFormFields();
+
+  console.log("✅✅✅✅ Extracted form fields:", extractedFields);
+
   if (!extractedFields.length) {
     throw new Error("No form fields were found on this page.");
   }
@@ -851,6 +853,8 @@ async function performAutoApply(resumeData) {
     fields: extractedFields,
     resume: resumeText,
   });
+
+  console.log("✅✅✅✅ LLM returned field values:", fieldValues);
 
   const resumeUpdates = Object.fromEntries(
     Object.entries(fieldValues).filter(([, value]) => value && value !== "NOTFOUND"),
