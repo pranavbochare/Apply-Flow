@@ -55,7 +55,11 @@ function getActualPlaceholder(element) {
 function extractFormFields() {
   const selectors =
     "input:not([type=hidden]):not([type=submit]):not([type=button]):not([type=reset]), textarea";
-  const elements = Array.from(document.querySelectorAll(selectors)).filter((el) => !el.disabled);
+  const elements = Array.from(document.querySelectorAll(selectors)).filter((el) => {
+    if (el.disabled) return false;
+    const val = (el.value ?? "").toString().trim();
+    return !val;
+  });
   const usedKeys = new Set();
 
   return elements.map((element, index) => {
@@ -626,8 +630,18 @@ async function autoFillFields(extractedFields, fieldValues) {
   } catch (error) {
     console.log("No resume file available for file inputs:", error.message);
   }
+  // Load any previously saved resume values from chrome.storage
+  const storedResume = await new Promise((resolve) => {
+    try {
+      chrome.storage.local.get(["resume"], (result) => {
+        resolve(result?.resume || {});
+      });
+    } catch (e) {
+      resolve({});
+    }
+  });
 
-  extractedFields.forEach((field) => {
+  for (const field of extractedFields) {
     console.log("field ---------> ", field);
     if (field.type === "file") {
       const element = findFieldElement(field);
@@ -637,19 +651,42 @@ async function autoFillFields(extractedFields, fieldValues) {
       } else {
         console.log("Skipping manual prompt for file field:", field.key);
       }
-      return;
+      continue;
     }
 
-    const value = fieldValues[field.placeholder || field.key || field.label];
-    console.log(`Filling field "${field.key}" with value:`, value);
+    const element = findFieldElement(field) || document.querySelector(field.selector);
+    const pageValue = element?.value?.toString().trim();
+
+    // Prefer LLM output keyed by field.key, but fall back to placeholder/label
+    const llmValue =
+      (fieldValues &&
+        (fieldValues[field.key] ?? fieldValues[field.placeholder] ?? fieldValues[field.label])) ||
+      null;
+
+    // Also check stored resume values (from chrome.storage.local)
+    const storedValue =
+      (storedResume &&
+        (storedResume[field.key] ??
+          storedResume[field.placeholder] ??
+          storedResume[field.label])) ||
+      null;
+
+    // Final chosen value: LLM -> stored -> page (if any)
+    const value = llmValue ?? storedValue ?? pageValue;
+
+    console.log(`Filling field "${field.key}" with value:`, value, {
+      llmValue,
+      storedValue,
+      pageValue,
+    });
+
     if (value && value !== "NOTFOUND") {
       filledValues[field.key] = value;
-      const element = document.querySelector(field.selector);
       fillInputField(element, value);
     } else {
       missingFields.push(field);
     }
-  });
+  }
 
   if (missingFields.length > 0) {
     const { values: manualValues, aiFilledKeys } = await promptForMissingValues(missingFields);
