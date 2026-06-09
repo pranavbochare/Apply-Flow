@@ -866,8 +866,6 @@ function autoFillAllFileInputs(file) {
 async function performAutoApply(resumeData) {
   const extractedFields = extractFormFields();
 
-  console.log("✅✅✅✅ Extracted form fields:", extractedFields);
-
   if (!extractedFields.length) {
     throw new Error("No form fields were found on this page.");
   }
