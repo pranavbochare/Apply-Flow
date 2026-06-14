@@ -16,7 +16,6 @@ function initializeDB() {
 
     request.onsuccess = () => {
       db = request.result;
-      console.log("Background: Database opened successfully");
       resolve(db);
     };
 
@@ -26,7 +25,6 @@ function initializeDB() {
         const objectStore = database.createObjectStore(STORE_NAME, { keyPath: "id" });
         objectStore.createIndex("name", "name", { unique: false });
         objectStore.createIndex("timestamp", "timestamp", { unique: false });
-        console.log("Object store created");
       }
     };
   });

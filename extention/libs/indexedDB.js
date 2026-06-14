@@ -20,7 +20,6 @@ export function initializeDB() {
 
     request.onsuccess = () => {
       db = request.result;
-      console.log("Database opened successfully");
       resolve(db);
     };
 
@@ -30,7 +29,6 @@ export function initializeDB() {
         const objectStore = database.createObjectStore(STORE_NAME, { keyPath: "id" });
         objectStore.createIndex("name", "name", { unique: false });
         objectStore.createIndex("timestamp", "timestamp", { unique: false });
-        console.log("Object store created");
       }
     };
   });
@@ -72,7 +70,6 @@ export function saveResumeToIndexedDB(file, metadata = {}) {
         };
 
         request.onsuccess = () => {
-          console.log("Resume saved to IndexedDB successfully");
           resolve(resumeRecord.id);
         };
       };
@@ -162,7 +159,6 @@ export function deleteResumeFromIndexedDB(id = "default") {
       };
 
       request.onsuccess = () => {
-        console.log("Resume deleted from IndexedDB successfully");
         resolve();
       };
     } catch (error) {

@@ -241,7 +241,6 @@ ${resumeText}
 async function fillRadioGroup(group, resumeText) {
   try {
     if (group.alreadyChecked) {
-      console.log(`⏭️ Skipping radio group "${group.groupLabel}" — already answered`);
       return;
     }
 
@@ -249,11 +248,6 @@ async function fillRadioGroup(group, resumeText) {
       console.warn(`No options for radio group "${group.groupLabel}"`);
       return;
     }
-
-    console.log(
-      `📻 Radio group "${group.groupLabel}": ${group.options.length} options →`,
-      group.options.map((o) => o.label),
-    );
 
     let chosenLabel = await getRadioChoiceFromLLM(group.groupLabel, group.options, resumeText);
     chosenLabel = chosenLabel?.trim()?.replace(/^["'`\s]+|["'`\s]+$/g, "");
@@ -301,7 +295,6 @@ async function fillRadioGroup(group, resumeText) {
     }
 
     await sleep(150);
-    console.log(`✅ RADIO "${group.groupLabel}" → "${matched.label}"`);
   } catch (err) {
     console.error(`Error filling radio group "${group.groupLabel}":`, err);
   }
@@ -831,7 +824,6 @@ async function autoFillFields(extractedFields, fieldValues) {
   });
 
   for (const field of extractedFields) {
-    console.log("field ---------> ", field);
     if (field.type === "file") {
       const element = findFieldElement(field);
       if (element && resumeFile) {
@@ -859,12 +851,6 @@ async function autoFillFields(extractedFields, fieldValues) {
       null;
 
     const value = llmValue ?? storedValue ?? pageValue;
-
-    console.log(`Filling field "${field.key}" with value:`, value, {
-      llmValue,
-      storedValue,
-      pageValue,
-    });
 
     if (value && value !== "NOTFOUND") {
       filledValues[field.key] = value;
@@ -990,8 +976,6 @@ function autoFillFileInput(fileInput, file) {
       dataTransfer.items.add(file);
       fileInput.files = dataTransfer.files;
     } catch (e) {
-      console.log("DataTransfer not available, trying direct assignment...");
-
       const fileList = {
         0: file,
         length: 1,
@@ -1011,10 +995,8 @@ function autoFillFileInput(fileInput, file) {
     fileInput.dispatchEvent(new Event("focus", { bubbles: true }));
     fileInput.dispatchEvent(new Event("blur", { bubbles: true }));
 
-    console.log("Resume automatically filled in file input:", fileInput.name || fileInput.id);
     return true;
   } catch (error) {
-    console.log("Could not auto-fill file input:", error.message);
     return false;
   }
 }
@@ -1241,7 +1223,6 @@ async function fillDropdownFields(dropdownField, resumeText) {
       originalInput.value = matched.value;
       originalInput.dispatchEvent(new Event("change", { bubbles: true }));
       originalInput.dispatchEvent(new Event("input", { bubbles: true }));
-      console.log(`✅ SELECT "${dropdownField.label}" → "${matched.label}"`);
       return;
     }
 
@@ -1290,7 +1271,6 @@ async function fillDropdownFields(dropdownField, resumeText) {
     targetEl.dispatchEvent(new MouseEvent("mouseup", { bubbles: true }));
 
     await sleep(200);
-    console.log(`✅ CUSTOM "${dropdownField.label}" → "${matchedLabel}"`);
   } catch (err) {
     console.error(`Error on "${dropdownField.label}":`, err);
   }
@@ -1299,11 +1279,8 @@ async function fillDropdownFields(dropdownField, resumeText) {
 function autoFillAllFileInputs(file) {
   const fileInputs = findFileInputs();
   if (fileInputs.length === 0) {
-    console.log("No file inputs found on page");
     return;
   }
-
-  console.log(`Found ${fileInputs.length} file input(s), filling with resume...`);
 
   fileInputs.forEach((fileInput) => {
     autoFillFileInput(fileInput, file);
@@ -1312,8 +1289,6 @@ function autoFillAllFileInputs(file) {
 
 async function performAutoApply(resumeData) {
   const extractedFields = extractFormFields();
-  console.log("✅✅✅✅ Extracted form fields:", extractedFields);
-
   // Convert resume data to text once — used by all fill steps
   let resumeText = "";
   if (typeof resumeData === "string") {
@@ -1328,8 +1303,6 @@ async function performAutoApply(resumeData) {
 
   // ── 1. Fill radio button groups ──────────────────────────────────────────
   const radioGroups = extractRadioGroups();
-  console.log("✅✅✅✅ Detected radio groups:", radioGroups);
-
   if (radioGroups.length) {
     for (const group of radioGroups) {
       await fillRadioGroup(group, resumeText);
@@ -1344,11 +1317,8 @@ async function performAutoApply(resumeData) {
       await fillDropdownFields(field, resumeText);
     }
   }
-  console.log("✅✅✅✅ Detected dropdown fields:", dropdownFields);
-
   // ── 3. Fill normal text/textarea fields via LLM ──────────────────────────
   const normalFields = extractedFields.filter((field) => field.isDropdown !== true);
-  console.log("✅✅✅✅ Fields to auto-fill with LLM:", normalFields);
 
   if (!normalFields.length && !dropdownFields.length && !radioGroups.length) {
     throw new Error("No form fields were found on this page.");
@@ -1359,8 +1329,6 @@ async function performAutoApply(resumeData) {
       fields: normalFields,
       resume: resumeText,
     });
-
-    console.log("✅✅✅✅ LLM returned field values:", fieldValues);
 
     const resumeUpdates = Object.fromEntries(
       Object.entries(fieldValues).filter(([, value]) => value && value !== "NOTFOUND"),
