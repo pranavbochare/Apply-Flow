@@ -280,53 +280,69 @@ function getActualPlaceholder(element) {
   return null;
 }
 
-function extractFormFields() {
-  const selectors = `
-    input:not([type=hidden]):not([type=submit]):not([type=button]):not([type=reset]):not([type=radio]),
-    textarea,
-    select,
-    [role="combobox"]
-  `;
-
-  const elements = Array.from(document.querySelectorAll(selectors)).filter((el) => {
-    if (el.disabled) return false;
-
-    const tag = el.tagName.toLowerCase();
-
-    if (tag === "select" || el.getAttribute("role") === "combobox") {
-      return true;
+// ─── COMBINE RESUME + PROFILE DATA ─────────────────────────────────────────────
+// Merges the parsed resume with the user's saved profile (contact info, links,
+// EEO/demographic answers, etc.) into a single labeled context block so every
+// LLM call — radio groups, dropdowns, free-text fields, and the manual-fill
+// AI button — can draw on both sources instead of resume text alone.
+function buildApplicantContext(resumeData, profileData) {
+  const toText = (data) => {
+    if (!data) return "";
+    if (typeof data === "string") return data.trim();
+    try {
+      return JSON.stringify(data, null, 2).trim();
+    } catch (e) {
+      return "";
     }
+  };
 
-    const val = (el.value ?? "").toString().trim();
-    return !val;
-  });
+  const resumeText = toText(resumeData);
+  const profileText = toText(profileData);
 
-  const usedKeys = new Set();
+  const sections = [];
+  if (resumeText) {
+    sections.push(`RESUME:\n${resumeText}`);
+  }
+  if (profileText) {
+    sections.push(
+      `PROFILE INFORMATION (saved user profile — prefer this for contact details, links, location, and questions the resume doesn't cover; the resume is the primary source for work history, skills, and experience):\n${profileText}`,
+    );
+  }
 
-  return elements.map((element, index) => {
-    const label = findLabelText(element);
-    const placeholder = getActualPlaceholder(element);
+  return sections.join("\n\n");
+}
 
-    const baseKey = label || element.name || element.id || element.type || `field_${index}`;
+/**
+ * Looks up a value for `field` inside profileData, trying key, placeholder,
+ * and label as candidate property names (mirrors how storedResume lookups
+ * work in autoFillFields).
+ */
+function getProfileValueForField(profileData, field) {
+  if (!profileData || typeof profileData !== "object") return null;
+  return (
+    profileData[field.key] ?? profileData[field.placeholder] ?? profileData[field.label] ?? null
+  );
+}
 
-    const key = createElementKey(baseKey, index, usedKeys);
+// Replace the old extractFormFields() function with this:
+function extractFormFields() {
+  const extractor = new FormFieldExtractor({ includeFilled: false });
+  const fields = extractor.extract(document);
 
-    const isDropdown =
-      element.tagName.toLowerCase() === "select" || element.getAttribute("role") === "combobox";
-
-    return {
-      key,
-      tagName: element.tagName,
-      type: element.type || null,
-      id: element.id || null,
-      name: element.name || null,
-      placeholder,
-      label: label || null,
-      selector: getElementSelector(element),
-      value: element.value || null,
-      isDropdown,
-    };
-  });
+  // Map FormFieldExtractor's shape onto the shape the rest of content.js expects.
+  return fields.map((f) => ({
+    key: f.key,
+    tagName: f.tagName,
+    type: f.type,
+    id: f.id,
+    name: f.name,
+    placeholder: f.placeholder,
+    label: f.label,
+    selector: f.locator.selector, // flattened selector (top-level DOM)
+    locator: f.locator, // keep the full locator around too, for resolveFieldElement below
+    value: f.value,
+    isDropdown: f.isDropdown,
+  }));
 }
 
 // ─── EXTRACT RADIO GROUPS ──────────────────────────────────────────────────────
@@ -431,7 +447,7 @@ function findRadioGroupLabel(radios) {
 }
 
 // ─── LLM RADIO SELECTOR ───────────────────────────────────────────────────────
-async function getRadioChoiceFromLLM(groupLabel, options, resumeText) {
+async function getRadioChoiceFromLLM(groupLabel, options, applicantContext) {
   const { apiKey, model } = await getApiSettings();
 
   const optionLabels = options.map((o) => o.label);
@@ -441,10 +457,10 @@ You are filling out a job application form.
 Question / Field: "${groupLabel}"
 Available radio options:
 ${optionLabels.join(", ")}
-Based on the resume below, return ONLY one exact option from the available options above.
+Based on the applicant data below (resume and/or profile), return ONLY one exact option from the available options above.
 No explanation. No punctuation. No extra text. Just the option label exactly as written.
-Resume:
-${resumeText}
+Applicant data:
+${applicantContext}
   `.trim();
 
   const response = await fetch("https://openrouter.ai/api/v1/chat/completions", {
@@ -467,7 +483,7 @@ ${resumeText}
 }
 
 // ─── FILL RADIO GROUP ─────────────────────────────────────────────────────────
-async function fillRadioGroup(group, resumeText) {
+async function fillRadioGroup(group, applicantContext) {
   try {
     if (group.alreadyChecked) {
       return;
@@ -478,7 +494,11 @@ async function fillRadioGroup(group, resumeText) {
       return;
     }
 
-    let chosenLabel = await getRadioChoiceFromLLM(group.groupLabel, group.options, resumeText);
+    let chosenLabel = await getRadioChoiceFromLLM(
+      group.groupLabel,
+      group.options,
+      applicantContext,
+    );
     chosenLabel = chosenLabel?.trim()?.replace(/^["'`\s]+|["'`\s]+$/g, "");
 
     if (!chosenLabel) return;
@@ -565,16 +585,17 @@ function extractJsonFromText(text) {
 
 async function callGeminiApi(payload) {
   const prompt = `
-You are an AI resume parser.
+You are an AI resume/profile parser.
 
-Your task is to extract values from the resume based ONLY on the provided fields.
+Your task is to extract values from the applicant data based ONLY on the provided fields.
 
 Instructions:
 - The input field names are provided in "FIELDS TO EXTRACT".
 - Create a JSON object where:
   - key = field name from "FIELDS TO EXTRACT"
-  - value = matching information found in the resume
-- If a value is not found in the resume, return "NOTFOUND".
+  - value = matching information found in the applicant data (resume and/or profile)
+- Prefer the profile section for contact details, links, and location; prefer the resume for work history, skills, and experience.
+- If a value is not found in either, return "NOTFOUND".
 - Do not create extra fields.
 - Do not rename fields.
 - Return ONLY raw JSON.
@@ -583,8 +604,8 @@ Instructions:
 FIELDS TO EXTRACT:
 ${payload.fields.map((field) => field.key).join(", ")}
 
-RESUME:
-${payload.resume}
+APPLICANT DATA:
+${payload.context}
 `;
 
   const { apiKey, model } = await getApiSettings();
@@ -690,7 +711,7 @@ function fillInputField(element, value) {
   element.dispatchEvent(new Event("change", { bubbles: true }));
 }
 
-async function promptForMissingValues(missingFields) {
+async function promptForMissingValues(missingFields, profileData) {
   return new Promise((resolve) => {
     const sidebar = getOrCreateSidebar();
 
@@ -863,7 +884,6 @@ async function promptForMissingValues(missingFields) {
         height: 18px;
         border-radius: 50%;
         border: 3px solid rgba(255, 255, 255, 0.55);
-        border-top-color: #ffffff;
         animation: aaButtonSpinner 0.9s linear infinite;
         z-index: 10;
       }
@@ -917,19 +937,21 @@ async function promptForMissingValues(missingFields) {
         const pageContext = getPageContext();
         const resumeData = await new Promise((resolve, reject) => {
           chrome.storage.local.get(["resume"], (result) => {
-            if (chrome.runtime.lastError)
+            if (chrome.runtime.lastError) {
               reject(new Error("Failed to retrieve resume from storage"));
-            else if (!result.resume) reject(new Error("No resume found in storage"));
-            else resolve(result.resume);
+            } else {
+              resolve(result.resume || null);
+            }
           });
         });
 
-        let resumeText =
-          typeof resumeData === "string" ? resumeData : JSON.stringify(resumeData, null, 2);
-        if (!resumeText || !resumeText.trim()) throw new Error("Resume data is empty or invalid.");
+        const applicantContext = buildApplicantContext(resumeData, profileData);
+        if (!applicantContext) {
+          throw new Error("No resume or profile data available. Add one in the extension popup.");
+        }
 
         const prompt = `
-give me only value for this application field based on the resume and the current page context provided. Do not give extra text.
+give me only value for this application field based on the applicant's data and the current page context provided. Do not give extra text.
 FIELD TO EXTRACT:
 Field Name: "${field.label || field.placeholder || field.key}"
 
@@ -938,8 +960,8 @@ Title: ${pageContext.title}
 URL: ${pageContext.url}
 Text: ${pageContext.text}
 
-RESUME:
-${resumeText}
+APPLICANT DATA:
+${applicantContext}
 `;
         const { apiKey, model } = await getApiSettings();
         if (!apiKey || !model) {
@@ -1064,7 +1086,7 @@ ${resumeText}
   });
 }
 
-async function autoFillFields(extractedFields, fieldValues, onProgress) {
+async function autoFillFields(extractedFields, fieldValues, onProgress, profileData) {
   const missingFields = [];
   const filledValues = {};
   let resumeFile = null;
@@ -1118,7 +1140,12 @@ async function autoFillFields(extractedFields, fieldValues, onProgress) {
           storedResume[field.label])) ||
       null;
 
-    const value = llmValue ?? storedValue ?? pageValue;
+    // Profile data (contact info, links, location, EEO answers, etc.) is
+    // checked after the LLM's answer and the saved resume, but before
+    // falling back to whatever is already on the page.
+    const profileValue = getProfileValueForField(profileData, field);
+
+    const value = llmValue ?? storedValue ?? profileValue ?? pageValue;
 
     if (value && value !== "NOTFOUND") {
       filledValues[field.key] = value;
@@ -1135,7 +1162,10 @@ async function autoFillFields(extractedFields, fieldValues, onProgress) {
     // visible to the user, not covered by the loading overlay.
     hideSidebarLoader();
 
-    const { values: manualValues, aiFilledKeys } = await promptForMissingValues(missingFields);
+    const { values: manualValues, aiFilledKeys } = await promptForMissingValues(
+      missingFields,
+      profileData,
+    );
     const valuesToSave = {};
 
     const manualEntries = Object.entries(manualValues).filter(([, value]) => value);
@@ -1442,7 +1472,7 @@ async function extractOptions(originalInput) {
 }
 
 // ─── LLM DROPDOWN MATCHER ─────────────────────────────────────────────────────
-async function getMatchFromLLM(fieldLabel, options, resumeText) {
+async function getMatchFromLLM(fieldLabel, options, applicantContext) {
   const { apiKey, model } = await getApiSettings();
   const optionLabels = [...new Set(options.map((o) => o.label))];
 
@@ -1451,10 +1481,10 @@ You are filling out a job application form.
 Field: "${fieldLabel}"
 Available options:
 ${optionLabels.join(", ")}
-Based on the resume below, return ONLY one exact option from the available options.
+Based on the applicant data below (resume and/or profile), return ONLY one exact option from the available options.
 No explanation. No punctuation. No extra text. Just the option.
-Resume:
-${resumeText}
+Applicant data:
+${applicantContext}
   `.trim();
 
   const response = await fetch("https://openrouter.ai/api/v1/chat/completions", {
@@ -1478,7 +1508,7 @@ ${resumeText}
 }
 
 // ─── FILL DROPDOWN ────────────────────────────────────────────────────────────
-async function fillDropdownFields(dropdownField, resumeText) {
+async function fillDropdownFields(dropdownField, applicantContext) {
   try {
     if (!dropdownField?.selector) {
       console.warn("Missing selector:", dropdownField);
@@ -1496,7 +1526,7 @@ async function fillDropdownFields(dropdownField, resumeText) {
       const options = await extractOptions(originalInput);
       if (!options.length) return;
 
-      let matchedLabel = await getMatchFromLLM(dropdownField.label, options, resumeText);
+      let matchedLabel = await getMatchFromLLM(dropdownField.label, options, applicantContext);
       matchedLabel = matchedLabel?.trim()?.replace(/^["'`\s]+|["'`\s]+$/g, "");
       if (!matchedLabel) return;
 
@@ -1522,7 +1552,7 @@ async function fillDropdownFields(dropdownField, resumeText) {
       return;
     }
 
-    let matchedLabel = await getMatchFromLLM(dropdownField.label, options, resumeText);
+    let matchedLabel = await getMatchFromLLM(dropdownField.label, options, applicantContext);
     matchedLabel = matchedLabel?.trim()?.replace(/^["'`\s]+|["'`\s]+$/g, "");
     if (!matchedLabel) return;
 
@@ -1581,16 +1611,14 @@ async function performAutoApply(resumeData, profileData) {
 
   try {
     const extractedFields = extractFormFields();
-    // Convert resume data to text once — used by all fill steps
-    let resumeText = "";
-    if (typeof resumeData === "string") {
-      resumeText = resumeData;
-    } else if (typeof resumeData === "object") {
-      resumeText = JSON.stringify(resumeData, null, 2);
-    }
 
-    if (!resumeText || !resumeText.trim()) {
-      throw new Error("Resume data is empty or invalid.");
+    // Merge resume + profile once — every fill step below (radio groups,
+    // dropdowns, free-text fields, and the manual "AI fill" button) draws
+    // from this single combined context.
+    const applicantContext = buildApplicantContext(resumeData, profileData);
+
+    if (!applicantContext.trim()) {
+      throw new Error("Resume and profile data are both empty or invalid.");
     }
 
     // ── 1. Fill radio button groups ────────────────────────────────────────
@@ -1598,7 +1626,7 @@ async function performAutoApply(resumeData, profileData) {
     if (radioGroups.length) {
       for (let i = 0; i < radioGroups.length; i++) {
         updateSidebarLoader(`Filling radio options (${i + 1}/${radioGroups.length})...`);
-        await fillRadioGroup(radioGroups[i], resumeText);
+        await fillRadioGroup(radioGroups[i], applicantContext);
         await sleep(200);
       }
     }
@@ -1608,7 +1636,7 @@ async function performAutoApply(resumeData, profileData) {
     if (dropdownFields.length) {
       for (let i = 0; i < dropdownFields.length; i++) {
         updateSidebarLoader(`Filling dropdown fields (${i + 1}/${dropdownFields.length})...`);
-        await fillDropdownFields(dropdownFields[i], resumeText);
+        await fillDropdownFields(dropdownFields[i], applicantContext);
       }
     }
 
@@ -1621,11 +1649,11 @@ async function performAutoApply(resumeData, profileData) {
 
     if (normalFields.length) {
       updateSidebarLoader(
-        `Reading your resume for ${normalFields.length} field${normalFields.length > 1 ? "s" : ""}...`,
+        `Reading your resume and profile for ${normalFields.length} field${normalFields.length > 1 ? "s" : ""}...`,
       );
       const fieldValues = await callGeminiApi({
         fields: normalFields,
-        resume: resumeText,
+        context: applicantContext,
       });
 
       const resumeUpdates = Object.fromEntries(
@@ -1636,9 +1664,14 @@ async function performAutoApply(resumeData, profileData) {
       }
 
       updateSidebarLoader(`Filling fields (0/${normalFields.length})...`);
-      await autoFillFields(normalFields, fieldValues, (done, total) => {
-        updateSidebarLoader(`Filling fields (${done}/${total})...`);
-      });
+      await autoFillFields(
+        normalFields,
+        fieldValues,
+        (done, total) => {
+          updateSidebarLoader(`Filling fields (${done}/${total})...`);
+        },
+        profileData,
+      );
     }
 
     // ── 4. Auto-fill file inputs ─────────────────────────────────────────────
