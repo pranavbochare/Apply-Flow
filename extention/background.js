@@ -1,4 +1,3 @@
-// IndexedDB setup and handlers
 const DB_NAME = "ApplyFlowDB";
 const DB_VERSION = 1;
 const STORE_NAME = "resumes";
@@ -90,7 +89,6 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   if (message?.type === "GET_RESUME_FROM_IDB") {
     getResumeFromIndexedDB()
       .then((resumeRecord) => {
-        // Convert ArrayBuffer to a format that can be sent through message passing
         const fileDataArray = Array.from(new Uint8Array(resumeRecord.fileData));
         sendResponse({
           success: true,

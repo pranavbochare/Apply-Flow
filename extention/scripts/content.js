@@ -1,3 +1,232 @@
+createFloatingBot();
+injectAutoApplyGlobalStyles();
+
+function createFloatingBot() {
+  if (document.getElementById("autoapply-bot")) return;
+
+  const bot = document.createElement("div");
+
+  bot.id = "autoapply-bot";
+  bot.innerHTML = `
+  <img
+    src="${chrome.runtime.getURL("../images/bot5.png")}"
+    alt="ApplyFlow Bot"
+    id="bot-image"
+  />
+`;
+
+  document.body.appendChild(bot);
+
+  makeDraggable(bot);
+
+  bot.addEventListener("click", () => {
+    toggleSidebar();
+  });
+}
+
+function getOrCreateSidebar() {
+  let sidebar = document.getElementById("autoapply-sidebar");
+  if (sidebar) return sidebar;
+
+  sidebar = document.createElement("div");
+  sidebar.id = "autoapply-sidebar";
+  sidebar.innerHTML = `
+      <iframe
+          id="autoapply-frame"
+          src="${chrome.runtime.getURL("popup/popup.html")}"
+      ></iframe>
+  `;
+
+  // Force a compact, chatbot-widget shape (fixed size, floating, rounded)
+  // instead of a tall full-height panel. Using setProperty(..., "important")
+  // so this wins over any existing sidebar CSS from elsewhere.
+  const chatbotSizing = {
+    position: "fixed",
+    bottom: "24px",
+    right: "24px",
+    top: "auto",
+    left: "auto",
+    width: "380px",
+    height: "620px",
+    "max-height": "80vh",
+    "border-radius": "18px",
+    overflow: "hidden",
+    "box-shadow": "0 18px 45px rgba(15, 23, 42, 0.25)",
+    "z-index": "2147483000",
+  };
+  Object.entries(chatbotSizing).forEach(([prop, value]) => {
+    sidebar.style.setProperty(prop, value, "important");
+  });
+
+  document.body.appendChild(sidebar);
+
+  const frame = sidebar.querySelector("#autoapply-frame");
+  if (frame) {
+    frame.style.setProperty("width", "100%", "important");
+    frame.style.setProperty("height", "100%", "important");
+    frame.style.setProperty("border", "none", "important");
+    frame.style.setProperty("display", "block", "important");
+  }
+
+  return sidebar;
+}
+
+function toggleSidebar() {
+  const existing = document.getElementById("autoapply-sidebar");
+  if (existing) {
+    existing.remove();
+    return;
+  }
+  getOrCreateSidebar();
+}
+
+// ─── SHARED ENGAGING LOADER ────────────────────────────────────────────────────
+// One full-sidebar loader, reused by "Start Auto Apply" and "Submit & Auto-Fill",
+// so both flows show the same progress-style loading experience (e.g. "Filling
+// fields (3/8)..."). This is separate from the per-field AI button, which only
+// shows its own inline spinner and never triggers this overlay.
+function injectAutoApplyGlobalStyles() {
+  if (document.getElementById("aa-global-style")) return;
+
+  const style = document.createElement("style");
+  style.id = "aa-global-style";
+  style.textContent = `
+    .aa-sidebar-loader {
+      position: absolute;
+      top: 78px;
+      right: 0;
+      bottom: 0;
+      left: 0;
+      background: rgba(255, 255, 255, 0.97);
+      z-index: 30;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+      animation: aaFadeIn 0.2s ease-out;
+    }
+    .aa-sidebar-loader.aa-hidden {
+      display: none !important;
+      pointer-events: none;
+    }
+    .aa-sidebar-loader-card {
+      padding: 24px 28px;
+      background: white;
+      border-radius: 16px;
+      box-shadow: 0 18px 40px rgba(15, 23, 42, 0.14);
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 12px;
+      max-width: 80%;
+      text-align: center;
+    }
+    .aa-sidebar-loader-ring {
+      width: 40px;
+      height: 40px;
+      border-radius: 50%;
+      border: 4px solid rgba(59, 97, 255, 0.15);
+      border-top-color: #3b64ff;
+      animation: aaRingSpin 0.9s linear infinite;
+    }
+    .aa-sidebar-loader-text {
+      color: #22303c;
+      font-weight: 600;
+      font-size: 13px;
+      line-height: 1.4;
+    }
+    @keyframes aaFadeIn {
+      from { opacity: 0; transform: translateY(8px); }
+      to { opacity: 1; transform: translateY(0); }
+    }
+    @keyframes aaRingSpin {
+      from { transform: rotate(0deg); }
+      to { transform: rotate(360deg); }
+    }
+  `;
+  document.head.appendChild(style);
+}
+
+function getOrCreateSidebarLoader() {
+  injectAutoApplyGlobalStyles();
+  const sidebar = getOrCreateSidebar();
+
+  let loader = sidebar.querySelector("#aa-sidebar-loader");
+  if (loader) return loader;
+
+  loader = document.createElement("div");
+  loader.id = "aa-sidebar-loader";
+  loader.className = "aa-sidebar-loader aa-hidden";
+  loader.innerHTML = `
+    <div class="aa-sidebar-loader-card">
+      <div class="aa-sidebar-loader-ring"></div>
+      <div class="aa-sidebar-loader-text">Loading...</div>
+    </div>
+  `;
+  sidebar.appendChild(loader);
+  return loader;
+}
+
+function showSidebarLoader(message) {
+  const loader = getOrCreateSidebarLoader();
+  loader.querySelector(".aa-sidebar-loader-text").textContent = message;
+  loader.classList.remove("aa-hidden");
+}
+
+function updateSidebarLoader(message) {
+  const sidebar = document.getElementById("autoapply-sidebar");
+  const loader = sidebar?.querySelector("#aa-sidebar-loader");
+  if (loader) loader.querySelector(".aa-sidebar-loader-text").textContent = message;
+}
+
+function hideSidebarLoader() {
+  const sidebar = document.getElementById("autoapply-sidebar");
+  const loader = sidebar?.querySelector("#aa-sidebar-loader");
+  if (loader) loader.classList.add("aa-hidden");
+}
+
+function makeDraggable(element) {
+  let isDragging = false;
+
+  let offsetX = 0;
+  let offsetY = 0;
+
+  element.addEventListener("mousedown", (e) => {
+    isDragging = true;
+
+    const rect = element.getBoundingClientRect();
+
+    offsetX = e.clientX - rect.left;
+    offsetY = e.clientY - rect.top;
+
+    element.style.left = rect.left + "px";
+    element.style.top = rect.top + "px";
+    element.style.right = "auto";
+
+    e.preventDefault();
+  });
+
+  document.addEventListener("mousemove", (e) => {
+    if (!isDragging) return;
+
+    let x = e.clientX - offsetX;
+    let y = e.clientY - offsetY;
+
+    const maxX = window.innerWidth - element.offsetWidth;
+    const maxY = window.innerHeight - element.offsetHeight;
+
+    x = Math.max(0, Math.min(x, maxX));
+    y = Math.max(0, Math.min(y, maxY));
+
+    element.style.left = x + "px";
+    element.style.top = y + "px";
+  });
+
+  document.addEventListener("mouseup", () => {
+    isDragging = false;
+  });
+}
+
 async function getApiSettings() {
   return new Promise((resolve, reject) => {
     chrome.storage.local.get(["apiKey", "model"], (result) => {
@@ -463,161 +692,214 @@ function fillInputField(element, value) {
 
 async function promptForMissingValues(missingFields) {
   return new Promise((resolve) => {
-    const modal = document.createElement("div");
-    modal.style.cssText = `
-      position: fixed;
-      top: 0;
-      left: 0;
-      width: 100%;
-      height: 100%;
-      background: rgba(0, 0, 0, 0.7);
-      backdrop-filter: blur(5px);
-      display: flex;
-      align-items: center;
-      justify-content: center;
-      z-index: 10000;
-      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
-      animation: fadeIn 0.3s ease-out;
-    `;
+    const sidebar = getOrCreateSidebar();
 
-    const formContainer = document.createElement("div");
-    formContainer.style.cssText = `
-      background: linear-gradient(135deg, #ffffff 0%, #f8f9fa 100%);
-      padding: 30px;
-      border-radius: 16px;
-      box-shadow: 0 20px 40px rgba(0, 0, 0, 0.15);
-      max-width: 600px;
-      width: 90%;
-      max-height: 80vh;
-      overflow-y: auto;
-      border: 1px solid rgba(255, 255, 255, 0.2);
-      animation: slideIn 0.3s ease-out;
-    `;
+    // remove any stale modal so they don't stack
+    sidebar.querySelector(".aa-inline-modal")?.remove();
 
     const style = document.createElement("style");
     style.textContent = `
-      @keyframes fadeIn {
-        from { opacity: 0; }
-        to { opacity: 1; }
+      .aa-inline-modal {
+  position: absolute;
+  top: 78px;
+  right: 0;
+  bottom: 0;
+  left: 0;
+  background: linear-gradient(135deg, #ffffff 0%, #f8f9fa 100%);
+  z-index: 20;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+  animation: aaFadeIn 0.2s ease-out;
+  box-shadow: 0 -8px 20px rgba(15, 23, 42, 0.08);
+}
+      @keyframes aaFadeIn {
+        from { opacity: 0; transform: translateY(8px); }
+        to { opacity: 1; transform: translateY(0); }
       }
-      @keyframes slideIn {
-        from { transform: translateY(-20px); opacity: 0; }
-        to { transform: translateY(0); opacity: 1; }
+      .aa-inline-modal-header {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        padding: 18px 18px 4px;
       }
-      .form-field {
-        margin-bottom: 20px;
+      .aa-inline-modal-header h3 {
+        margin: 0;
+        color: #2c3e50;
+        font-size: 17px;
+        font-weight: 700;
       }
-      .form-field label {
+      .aa-inline-modal-close {
+        border: none;
+        background: #f1f3f5;
+        color: #495057;
+        width: 28px;
+        height: 28px;
+        border-radius: 50%;
+        font-size: 18px;
+        line-height: 1;
+        cursor: pointer;
+      }
+      .aa-inline-modal-close:hover { background: #e9ecef; }
+      .aa-inline-modal-subtitle {
+        margin: 6px 18px 16px;
+        color: #6c757d;
+        font-size: 13px;
+      }
+      .aa-inline-modal-form {
+        padding: 0 18px 18px;
+        display: flex;
+        flex-direction: column;
+        flex: 1;
+        min-height: 0;
+        overflow-y: auto;
+        gap: 4px;
+        position: relative;
+        z-index: 5;
+
+        scrollbar-width: none;      /* Firefox */
+        -ms-overflow-style: none;   /* old Edge/IE */
+      }
+      .aa-inline-modal-form::-webkit-scrollbar {
+        display: none;               /* Chrome/Safari/new Edge */
+      }
+      .aa-form-field { margin-bottom: 14px; }
+      .aa-form-field label {
         display: block;
-        margin-bottom: 8px;
+        margin-bottom: 6px;
         font-weight: 600;
         color: #2c3e50;
-        font-size: 14px;
+        font-size: 13px;
       }
-      .form-field input {
+      .aa-form-field input {
         width: 100%;
-        padding: 12px 16px;
+        padding: 10px 12px;
         border: 2px solid #e1e8ed;
         border-radius: 8px;
-        font-size: 16px;
-        transition: all 0.3s ease;
+        font-size: 14px;
         box-sizing: border-box;
       }
-      .form-field input:focus {
+      .aa-form-field input:focus {
         outline: none;
         border-color: #007bff;
         box-shadow: 0 0 0 3px rgba(0, 123, 255, 0.1);
       }
-      .submit-btn {
-        width: 100%;
-        padding: 14px;
-        background: linear-gradient(135deg, #007bff 0%, #0056b3 100%);
-        color: white;
-        border: none;
-        border-radius: 8px;
-        font-size: 16px;
-        font-weight: 600;
-        cursor: pointer;
-        transition: all 0.3s ease;
-        margin-top: 10px;
-      }
-      .submit-btn:hover {
-        transform: translateY(-1px);
-        box-shadow: 0 4px 12px rgba(0, 123, 255, 0.3);
-      }
-      .submit-btn:active {
-        transform: translateY(0);
-      }
-      .form-field-wrapper {
-        position: relative;
-        display: flex;
-        align-items: flex-end;
-      }
-      .form-field-wrapper > div {
-        flex: 1;
-      }
-      .ai-fill-btn {
-        margin-left: 10px;
-        padding: 10px 14px;
+      .aa-field-wrapper { display: flex; align-items: flex-end; gap: 6px; }
+      .aa-field-wrapper > .aa-form-field { flex: 1; margin-bottom: 14px; }
+      .aa-ai-fill-btn {
+        padding: 9px 10px;
         background: linear-gradient(135deg, #6c63ff 0%, #5a47d4 100%);
         color: white;
         border: none;
         border-radius: 8px;
-        font-size: 13px;
+        font-size: 12px;
         font-weight: 600;
         cursor: pointer;
-        transition: all 0.3s ease;
         white-space: nowrap;
-        opacity: 0;
-        visibility: hidden;
-        transform: translateX(10px);
+        margin-bottom: 14px;
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        gap: 6px;
+        transition: all 0.2s ease;
+        z-index: 5;
       }
-      .form-field-wrapper:hover .ai-fill-btn {
-        opacity: 1;
-        visibility: visible;
-        transform: translateX(0);
-      }
-      .ai-fill-btn:hover {
-        transform: scale(1.05);
-        box-shadow: 0 4px 12px rgba(108, 99, 255, 0.3);
-      }
-      .ai-fill-btn:active {
-        transform: scale(0.95);
-      }
-      .ai-fill-btn.loading {
-        opacity: 0.6;
+      .aa-ai-fill-btn:hover:not(.loading) { transform: scale(1.05); }
+      .aa-ai-fill-btn.loading {
+        opacity: 0.9;
         cursor: not-allowed;
+      }
+      .aa-ai-btn-spinner {
+        display: none;
+        width: 12px;
+        height: 12px;
+        flex: none;
+        border-radius: 50%;
+        border: 2px solid rgba(255, 255, 255, 0.4);
+        border-top-color: #ffffff;
+        animation: aaInlineSpin 0.7s linear infinite;
+      }
+      .aa-ai-fill-btn.loading .aa-ai-btn-spinner {
+        display: inline-block;
+      }
+      .aa-ai-btn-label {
+        line-height: 1;
+      }
+      .aa-submit-btn {
+        margin-top: auto;
+        position: sticky;
+        bottom: 0;
+        width: 100%;
+        padding: 14px;
+        background: linear-gradient(135deg, #2563eb 0%, #1d4ed8 100%);
+        color: white;
+        border: none;
+        border-radius: 10px;
+        font-size: 15px;
+        font-weight: 700;
+        cursor: pointer;
+        transition: all 0.3s ease;
+        box-shadow: 0 -4px 12px rgba(37, 99, 235, 0.15), 0 4px 12px rgba(37, 99, 235, 0.3);
+        z-index: 5;
+      }
+      .aa-submit-btn:hover:not(.loading) { 
+        transform: translateY(-2px);
+        box-shadow: 0 -4px 12px rgba(37, 99, 235, 0.15), 0 6px 16px rgba(37, 99, 235, 0.4);
+      }
+      .aa-submit-btn:active:not(.loading) { 
+        transform: translateY(0);
+      }
+      .aa-submit-btn.loading {
+        opacity: 0.75;
+        cursor: not-allowed;
+      }
+      .aa-submit-btn.loading::before {
+        content: "";
+        position: absolute;
+        top: 50%;
+        left: 50%;
+        width: 18px;
+        height: 18px;
+        border-radius: 50%;
+        border: 3px solid rgba(255, 255, 255, 0.55);
+        border-top-color: #ffffff;
+        animation: aaButtonSpinner 0.9s linear infinite;
+        z-index: 10;
+      }
+      .aa-submit-btn.loading {
+        color: transparent;
+      }
+      @keyframes aaButtonSpinner {
+        from { transform: translate(-50%, -50%) rotate(0deg); }
+        to { transform: translate(-50%, -50%) rotate(360deg); }
+      }
+      @keyframes aaInlineSpin {
+        from { transform: rotate(0deg); }
+        to { transform: rotate(360deg); }
       }
     `;
     document.head.appendChild(style);
 
-    const title = document.createElement("h3");
-    title.textContent = "Complete Your Application";
-    title.style.cssText = `
-      margin: 0 0 25px 0;
-      color: #2c3e50;
-      font-size: 24px;
-      font-weight: 700;
-      text-align: center;
-    `;
+    const modal = document.createElement("div");
+    modal.className = "aa-inline-modal";
+
+    const header = document.createElement("div");
+    header.className = "aa-inline-modal-header";
+    header.innerHTML = `<h3>Complete Your Application</h3>`;
+
+    const closeBtn = document.createElement("button");
+    closeBtn.type = "button";
+    closeBtn.className = "aa-inline-modal-close";
+    closeBtn.innerHTML = "&times;";
+    header.appendChild(closeBtn);
 
     const subtitle = document.createElement("p");
+    subtitle.className = "aa-inline-modal-subtitle";
     subtitle.textContent = "Please provide the missing information below:";
-    subtitle.style.cssText = `
-      margin: 0 0 30px 0;
-      color: #6c757d;
-      font-size: 16px;
-      text-align: center;
-    `;
-
-    formContainer.appendChild(title);
-    formContainer.appendChild(subtitle);
 
     const form = document.createElement("form");
-    form.style.cssText = `
-      display: flex;
-      flex-direction: column;
-    `;
+    form.className = "aa-inline-modal-form";
 
     const inputs = {};
     const aiFilledKeys = new Set();
@@ -627,11 +909,7 @@ async function promptForMissingValues(missingFields) {
       const pageUrl = window.location.href || "";
       const pageText = document.body?.innerText?.trim() || "";
       const normalizedText = pageText.replace(/\s+/g, " ").trim();
-      return {
-        title: pageTitle,
-        url: pageUrl,
-        text: normalizedText.slice(-15000),
-      };
+      return { title: pageTitle, url: pageUrl, text: normalizedText.slice(-15000) };
     }
 
     async function fillFieldWithAI(field) {
@@ -639,26 +917,16 @@ async function promptForMissingValues(missingFields) {
         const pageContext = getPageContext();
         const resumeData = await new Promise((resolve, reject) => {
           chrome.storage.local.get(["resume"], (result) => {
-            if (chrome.runtime.lastError) {
+            if (chrome.runtime.lastError)
               reject(new Error("Failed to retrieve resume from storage"));
-            } else if (!result.resume) {
-              reject(new Error("No resume found in storage"));
-            } else {
-              resolve(result.resume);
-            }
+            else if (!result.resume) reject(new Error("No resume found in storage"));
+            else resolve(result.resume);
           });
         });
 
-        let resumeText = "";
-        if (typeof resumeData === "string") {
-          resumeText = resumeData;
-        } else if (typeof resumeData === "object") {
-          resumeText = JSON.stringify(resumeData, null, 2);
-        }
-
-        if (!resumeText || !resumeText.trim()) {
-          throw new Error("Resume data is empty or invalid.");
-        }
+        let resumeText =
+          typeof resumeData === "string" ? resumeData : JSON.stringify(resumeData, null, 2);
+        if (!resumeText || !resumeText.trim()) throw new Error("Resume data is empty or invalid.");
 
         const prompt = `
 give me only value for this application field based on the resume and the current page context provided. Do not give extra text.
@@ -682,12 +950,9 @@ ${resumeText}
 
         const response = await fetch("https://openrouter.ai/api/v1/chat/completions", {
           method: "POST",
-          headers: {
-            Authorization: `Bearer ${apiKey}`,
-            "Content-Type": "application/json",
-          },
+          headers: { Authorization: `Bearer ${apiKey}`, "Content-Type": "application/json" },
           body: JSON.stringify({
-            model: model,
+            model,
             messages: [{ role: "user", content: prompt }],
             temperature: 0.3,
           }),
@@ -707,20 +972,17 @@ ${resumeText}
           inputs[field.key].dispatchEvent(new Event("change", { bubbles: true }));
           aiFilledKeys.add(field.key);
         }
-
-        return { value: value, filledWithAi: true };
       } catch (error) {
         alert("Error: " + error.message);
-        return "NOTFOUND";
       }
     }
 
     missingFields.forEach((field) => {
-      const fieldWrapper = document.createElement("div");
-      fieldWrapper.className = "form-field-wrapper";
+      const wrapper = document.createElement("div");
+      wrapper.className = "aa-field-wrapper";
 
       const fieldContainer = document.createElement("div");
-      fieldContainer.className = "form-field";
+      fieldContainer.className = "aa-form-field";
 
       const label = document.createElement("label");
       label.textContent = field.label || field.placeholder || field.key;
@@ -734,75 +996,75 @@ ${resumeText}
 
       fieldContainer.appendChild(label);
       fieldContainer.appendChild(input);
-      fieldWrapper.appendChild(fieldContainer);
+      wrapper.appendChild(fieldContainer);
 
       const aiBtn = document.createElement("button");
       aiBtn.type = "button";
-      aiBtn.className = "ai-fill-btn";
-      aiBtn.textContent = "🤖 Fill with AI";
+      aiBtn.className = "aa-ai-fill-btn";
+      aiBtn.innerHTML = `
+        <span class="aa-ai-btn-spinner"></span>
+        <span class="aa-ai-btn-label">🤖 AI</span>
+      `;
+      const aiBtnLabel = aiBtn.querySelector(".aa-ai-btn-label");
+
       aiBtn.addEventListener("click", async (e) => {
         e.preventDefault();
         e.stopPropagation();
-
-        try {
-          aiBtn.classList.add("loading");
-          aiBtn.textContent = "⏳ Loading...";
-          aiBtn.disabled = true;
-
-          await fillFieldWithAI(field);
-        } catch (error) {
-          alert("Error: " + error.message);
-        } finally {
-          aiBtn.classList.remove("loading");
-          aiBtn.textContent = "🤖 Fill with AI";
-          aiBtn.disabled = false;
-        }
+        aiBtn.classList.add("loading");
+        aiBtn.disabled = true;
+        await fillFieldWithAI(field);
+        aiBtn.classList.remove("loading");
+        aiBtn.disabled = false;
       });
 
-      fieldWrapper.appendChild(aiBtn);
-      form.appendChild(fieldWrapper);
-
+      wrapper.appendChild(aiBtn);
+      form.appendChild(wrapper);
       inputs[field.key] = input;
     });
 
     const submitBtn = document.createElement("button");
     submitBtn.type = "submit";
-    submitBtn.textContent = "Submit & Auto-Fill Application";
-    submitBtn.className = "submit-btn";
-
+    submitBtn.textContent = "Submit & Auto-Fill";
+    submitBtn.className = "aa-submit-btn";
     form.appendChild(submitBtn);
-    formContainer.appendChild(form);
-    modal.appendChild(formContainer);
-    document.body.appendChild(modal);
+
+    modal.appendChild(header);
+    modal.appendChild(subtitle);
+    modal.appendChild(form);
+    sidebar.appendChild(modal);
+
+    function cleanup(result) {
+      modal.remove();
+      style.remove();
+      resolve(result);
+    }
 
     form.addEventListener("submit", async (e) => {
       e.preventDefault();
+      submitBtn.disabled = true;
+      submitBtn.classList.add("loading");
+      submitBtn.textContent = "";
 
       const values = {};
       missingFields.forEach((field) => {
         const value = inputs[field.key].value.trim();
-        if (value) {
-          values[field.key] = value;
-        }
+        if (value) values[field.key] = value;
       });
 
-      document.body.removeChild(modal);
-      document.head.removeChild(style);
-
-      resolve({ values, aiFilledKeys: Array.from(aiFilledKeys) });
+      // Hand off to the same engaging, progress-style loader used by
+      // "Start Auto Apply" — it takes over once the modal closes and the
+      // collected values are actually written into the page fields.
+      showSidebarLoader("Submitting your answers...");
+      cleanup({ values, aiFilledKeys: Array.from(aiFilledKeys) });
     });
 
-    modal.addEventListener("click", (e) => {
-      if (e.target === modal) {
-        document.body.removeChild(modal);
-        document.head.removeChild(style);
-        resolve({ values: {}, aiFilledKeys: Array.from(aiFilledKeys) });
-      }
+    closeBtn.addEventListener("click", () => {
+      cleanup({ values: {}, aiFilledKeys: Array.from(aiFilledKeys) });
     });
   });
 }
 
-async function autoFillFields(extractedFields, fieldValues) {
+async function autoFillFields(extractedFields, fieldValues, onProgress) {
   const missingFields = [];
   const filledValues = {};
   let resumeFile = null;
@@ -823,7 +1085,12 @@ async function autoFillFields(extractedFields, fieldValues) {
     }
   });
 
+  const total = extractedFields.length;
+  let processedCount = 0;
+
   for (const field of extractedFields) {
+    processedCount += 1;
+
     if (field.type === "file") {
       const element = findFieldElement(field);
       if (element && resumeFile) {
@@ -832,6 +1099,7 @@ async function autoFillFields(extractedFields, fieldValues) {
       } else {
         console.log("Skipping manual prompt for file field:", field.key);
       }
+      if (onProgress) onProgress(processedCount, total);
       continue;
     }
 
@@ -858,24 +1126,45 @@ async function autoFillFields(extractedFields, fieldValues) {
     } else {
       missingFields.push(field);
     }
+
+    if (onProgress) onProgress(processedCount, total);
   }
 
   if (missingFields.length > 0) {
+    // Hide the engaging loader before the modal opens — the modal needs to be
+    // visible to the user, not covered by the loading overlay.
+    hideSidebarLoader();
+
     const { values: manualValues, aiFilledKeys } = await promptForMissingValues(missingFields);
     const valuesToSave = {};
 
-    for (const [key, value] of Object.entries(manualValues)) {
-      if (value) {
-        filledValues[key] = value;
-        if (!aiFilledKeys.includes(key)) {
-          valuesToSave[key] = value;
-        }
-        const field = extractedFields.find((f) => f.key === key);
-        if (field) {
-          const element = findFieldElement(field);
-          fillInputField(element, value);
-        }
+    const manualEntries = Object.entries(manualValues).filter(([, value]) => value);
+    const manualTotal = manualEntries.length;
+
+    if (manualTotal > 0) {
+      // Reuse the same engaging, progress-style loader as "Start Auto Apply"
+      // while the collected answers are actually written into the page.
+      showSidebarLoader(`Filling submitted fields (0/${manualTotal})...`);
+    }
+
+    let manualFilled = 0;
+    for (const [key, value] of manualEntries) {
+      filledValues[key] = value;
+      if (!aiFilledKeys.includes(key)) {
+        valuesToSave[key] = value;
       }
+      const field = extractedFields.find((f) => f.key === key);
+      if (field) {
+        const element = findFieldElement(field);
+        fillInputField(element, value);
+      }
+      manualFilled += 1;
+      updateSidebarLoader(`Filling submitted fields (${manualFilled}/${manualTotal})...`);
+      await sleep(150);
+    }
+
+    if (manualTotal > 0) {
+      hideSidebarLoader();
     }
 
     if (Object.keys(valuesToSave).length > 0) {
@@ -1287,78 +1576,93 @@ function autoFillAllFileInputs(file) {
   });
 }
 
-async function performAutoApply(resumeData) {
-  const extractedFields = extractFormFields();
-  // Convert resume data to text once — used by all fill steps
-  let resumeText = "";
-  if (typeof resumeData === "string") {
-    resumeText = resumeData;
-  } else if (typeof resumeData === "object") {
-    resumeText = JSON.stringify(resumeData, null, 2);
-  }
+async function performAutoApply(resumeData, profileData) {
+  showSidebarLoader("Scanning the form...");
 
-  if (!resumeText || !resumeText.trim()) {
-    throw new Error("Resume data is empty or invalid.");
-  }
-
-  // ── 1. Fill radio button groups ──────────────────────────────────────────
-  const radioGroups = extractRadioGroups();
-  if (radioGroups.length) {
-    for (const group of radioGroups) {
-      await fillRadioGroup(group, resumeText);
-      await sleep(200);
-    }
-  }
-
-  // ── 2. Fill dropdown fields ──────────────────────────────────────────────
-  const dropdownFields = extractedFields.filter((field) => field.isDropdown === true);
-  if (dropdownFields.length) {
-    for (const field of dropdownFields) {
-      await fillDropdownFields(field, resumeText);
-    }
-  }
-  // ── 3. Fill normal text/textarea fields via LLM ──────────────────────────
-  const normalFields = extractedFields.filter((field) => field.isDropdown !== true);
-
-  if (!normalFields.length && !dropdownFields.length && !radioGroups.length) {
-    throw new Error("No form fields were found on this page.");
-  }
-
-  if (normalFields.length) {
-    const fieldValues = await callGeminiApi({
-      fields: normalFields,
-      resume: resumeText,
-    });
-
-    const resumeUpdates = Object.fromEntries(
-      Object.entries(fieldValues).filter(([, value]) => value && value !== "NOTFOUND"),
-    );
-    if (Object.keys(resumeUpdates).length > 0) {
-      await saveResumeFields(resumeUpdates);
-    }
-
-    await autoFillFields(normalFields, fieldValues);
-  }
-
-  // ── 4. Auto-fill file inputs ─────────────────────────────────────────────
   try {
-    const resumeFile = await getResumeFileFromIndexedDB();
-    autoFillAllFileInputs(resumeFile);
-  } catch (error) {
-    console.log("Could not auto-fill file inputs:", error.message);
-  }
+    const extractedFields = extractFormFields();
+    // Convert resume data to text once — used by all fill steps
+    let resumeText = "";
+    if (typeof resumeData === "string") {
+      resumeText = resumeData;
+    } else if (typeof resumeData === "object") {
+      resumeText = JSON.stringify(resumeData, null, 2);
+    }
 
-  return {
-    success: true,
-    message:
-      "Fields were populated. Missing values were requested manually and stored for future use.",
-  };
+    if (!resumeText || !resumeText.trim()) {
+      throw new Error("Resume data is empty or invalid.");
+    }
+
+    // ── 1. Fill radio button groups ────────────────────────────────────────
+    const radioGroups = extractRadioGroups();
+    if (radioGroups.length) {
+      for (let i = 0; i < radioGroups.length; i++) {
+        updateSidebarLoader(`Filling radio options (${i + 1}/${radioGroups.length})...`);
+        await fillRadioGroup(radioGroups[i], resumeText);
+        await sleep(200);
+      }
+    }
+
+    // ── 2. Fill dropdown fields ─────────────────────────────────────────────
+    const dropdownFields = extractedFields.filter((field) => field.isDropdown === true);
+    if (dropdownFields.length) {
+      for (let i = 0; i < dropdownFields.length; i++) {
+        updateSidebarLoader(`Filling dropdown fields (${i + 1}/${dropdownFields.length})...`);
+        await fillDropdownFields(dropdownFields[i], resumeText);
+      }
+    }
+
+    // ── 3. Fill normal text/textarea fields via LLM ─────────────────────────
+    const normalFields = extractedFields.filter((field) => field.isDropdown !== true);
+
+    if (!normalFields.length && !dropdownFields.length && !radioGroups.length) {
+      throw new Error("No form fields were found on this page.");
+    }
+
+    if (normalFields.length) {
+      updateSidebarLoader(
+        `Reading your resume for ${normalFields.length} field${normalFields.length > 1 ? "s" : ""}...`,
+      );
+      const fieldValues = await callGeminiApi({
+        fields: normalFields,
+        resume: resumeText,
+      });
+
+      const resumeUpdates = Object.fromEntries(
+        Object.entries(fieldValues).filter(([, value]) => value && value !== "NOTFOUND"),
+      );
+      if (Object.keys(resumeUpdates).length > 0) {
+        await saveResumeFields(resumeUpdates);
+      }
+
+      updateSidebarLoader(`Filling fields (0/${normalFields.length})...`);
+      await autoFillFields(normalFields, fieldValues, (done, total) => {
+        updateSidebarLoader(`Filling fields (${done}/${total})...`);
+      });
+    }
+
+    // ── 4. Auto-fill file inputs ─────────────────────────────────────────────
+    updateSidebarLoader("Attaching your resume file...");
+    try {
+      const resumeFile = await getResumeFileFromIndexedDB();
+      autoFillAllFileInputs(resumeFile);
+    } catch (error) {
+      console.log("Could not auto-fill file inputs:", error.message);
+    }
+
+    return {
+      success: true,
+      message:
+        "Fields were populated. Missing values were requested manually and stored for future use.",
+    };
+  } finally {
+    hideSidebarLoader();
+  }
 }
 
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   if (message?.type !== "START_AUTO_APPLY") return;
-
-  performAutoApply(message.resumeData)
+  performAutoApply(message.resumeData, message.profileData)
     .then((result) => sendResponse(result))
     .catch((error) => {
       sendResponse({ success: false, error: error.message || "Auto apply failed." });

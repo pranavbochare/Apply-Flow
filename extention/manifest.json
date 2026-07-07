@@ -4,7 +4,6 @@
   "version": "1.0",
   "manifest_version": 3,
   "action": {
-    "default_popup": "/popup/popup.html",
     "default_icon": "images/logo.png"
   },
   "background": {
@@ -20,7 +19,8 @@
   "content_scripts": [
     {
       "matches": ["<all_urls>"],
-      "js": ["scripts/content.js"]
+      "js": ["scripts/content.js"],
+      "css":["scripts/content.css"]
     }
   ],
   "web_accessible_resources": [
@@ -29,6 +29,15 @@
         "libs/pdf.worker.min.mjs"
       ],
       "matches": ["<all_urls>"]
+    },
+    {
+      "resources": [
+        "popup/*",
+        "images/*"
+      ],
+      "matches": [
+        "<all_urls>"
+      ]
     }
   ]
 }
