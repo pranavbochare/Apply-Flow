@@ -1411,14 +1411,133 @@ function getFieldTrigger(originalInput) {
 
 // ─── EXTRACT OPTIONS ──────────────────────────────────────────────────────────
 async function extractOptions(originalInput) {
-  // ── 1. Native <select> ───────────────────────────────────────────────────
+  // ── Helpers (defined inside) ──────────────────────────────────────────────
+  const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+
+  // Find the element that opens the dropdown
+  function getFieldTrigger(input) {
+    if (input.tagName === "SELECT") return input;
+
+    let trigger = input;
+
+    // Look for a parent with combobox role or dropdown classes
+    let parent = input.parentElement;
+    while (parent && parent !== document.body) {
+      if (
+        parent.getAttribute("role") === "combobox" ||
+        parent.hasAttribute("aria-haspopup") ||
+        parent.classList.contains("select") ||
+        parent.classList.contains("dropdown") ||
+        parent.classList.contains("react-select") ||
+        parent.classList.contains("downshift") ||
+        parent.matches('[data-testid*="select"], [data-component*="select"]')
+      ) {
+        const button = parent.querySelector(
+          'button, div[role="button"], .dropdown-toggle, .select-toggle',
+        );
+        if (button) {
+          trigger = button;
+          break;
+        }
+        trigger = parent;
+        break;
+      }
+      parent = parent.parentElement;
+    }
+
+    if (input.closest("label")) {
+      const label = input.closest("label");
+      if (label && label !== input) trigger = label;
+    }
+
+    if (trigger === input) {
+      const sibling = input.nextElementSibling || input.previousElementSibling;
+      if (sibling && (sibling.tagName === "BUTTON" || sibling.getAttribute("role") === "button")) {
+        trigger = sibling;
+      }
+    }
+
+    return trigger;
+  }
+
+  // Check if a node is an option element
+  function isOptionElement(node) {
+    if (node.nodeType !== 1) return false;
+    const tag = node.tagName.toLowerCase();
+    if (tag === "option") return true;
+    if (node.getAttribute("role") === "option") return true;
+    const cls = node.className || "";
+    if (
+      cls.includes("option") ||
+      cls.includes("item") ||
+      cls.includes("dropdown-item") ||
+      node.hasAttribute("data-option") ||
+      node.hasAttribute("data-value")
+    )
+      return true;
+    if (node.hasAttribute("aria-selected") || node.hasAttribute("aria-checked")) return true;
+    return false;
+  }
+
+  // Extract label and value from an option element
+  function extractOptionData(el) {
+    let label = "";
+    let value = "";
+
+    const labelEl = el.querySelector(".iti__country-name, .option-label, [data-label]");
+    if (labelEl) label = labelEl.textContent?.trim() || "";
+    if (!label) label = el.textContent?.trim() || "";
+
+    value = el.dataset?.value ?? el.getAttribute("data-value") ?? el.getAttribute("value") ?? label;
+
+    return { el, value, label };
+  }
+
+  // MutationObserver: capture options that appear after triggering
+  function captureOptionsOnMutation(triggerFn, timeout = 2000) {
+    return new Promise((resolve) => {
+      const options = [];
+      const observer = new MutationObserver((mutations) => {
+        for (const mutation of mutations) {
+          for (const node of mutation.addedNodes) {
+            if (node.nodeType === 1) {
+              if (isOptionElement(node)) {
+                options.push(node);
+              } else {
+                const found = node.querySelectorAll(
+                  'option, [role="option"], .option, .item, .dropdown-item, [data-option]',
+                );
+                options.push(...found);
+              }
+            }
+          }
+        }
+        if (options.length > 0) {
+          observer.disconnect();
+          resolve(options);
+        }
+      });
+
+      observer.observe(document.body, { childList: true, subtree: true });
+      triggerFn();
+
+      setTimeout(() => {
+        observer.disconnect();
+        resolve(options);
+      }, timeout);
+    });
+  }
+
+  // ── Main extraction logic ──────────────────────────────────────────────────
+
+  // 1. Native <select>
   if (originalInput.tagName === "SELECT") {
     return Array.from(originalInput.options)
       .filter((o) => o.text?.trim())
       .map((o) => ({ el: o, value: o.value, label: o.text.trim() }));
   }
 
-  // ── 2. intl-tel-input country list (input#iti-*) ─────────────────────────
+  // 2. intl-tel-input country list
   if (originalInput.id?.startsWith("iti-") || originalInput.closest(".iti")) {
     const countryList = document.querySelector(".iti__country-list");
     if (countryList) {
@@ -1433,7 +1552,31 @@ async function extractOptions(originalInput) {
     }
   }
 
-  // ── 3. Hidden native <select> in same container ───────────────────────────
+  // 3. Already visible dropdown options
+  const visibleSelectors = [
+    '[role="listbox"]:not([hidden])',
+    '[role="menu"]:not([hidden])',
+    '.dropdown-menu:not([style*="display: none"])',
+    '.select-dropdown:not([style*="display: none"])',
+    ".react-select__menu",
+    ".downshift-menu",
+    ".dropdown-options",
+  ];
+  for (const selector of visibleSelectors) {
+    const container = document.querySelector(selector);
+    if (container) {
+      const options = container.querySelectorAll(
+        '[role="option"], li, .option, .item, .dropdown-item, [data-option]',
+      );
+      if (options.length) {
+        return Array.from(options)
+          .map(extractOptionData)
+          .filter((o) => o.label);
+      }
+    }
+  }
+
+  // 4. Hidden native <select> in parent chain
   let shell = originalInput.parentElement;
   for (let i = 0; i < 8; i++) {
     if (!shell) break;
@@ -1446,46 +1589,79 @@ async function extractOptions(originalInput) {
     shell = shell.parentElement;
   }
 
-  // ── 4. MutationObserver: capture the menu div the moment it's added ───────
+  // 5. MutationObserver – open dropdown and catch dynamic options
   const trigger = getFieldTrigger(originalInput);
 
-  const optionEls = await captureOptionsOnMutation(() => {
+  const openDropdown = () => {
     trigger.dispatchEvent(new MouseEvent("mousedown", { bubbles: true, cancelable: true }));
+    trigger.dispatchEvent(new MouseEvent("mouseup", { bubbles: true }));
     trigger.click();
-  });
+    if (originalInput.tagName === "INPUT" || originalInput.tagName === "TEXTAREA") {
+      originalInput.focus();
+    }
+    trigger.dispatchEvent(new KeyboardEvent("keydown", { key: "ArrowDown", bubbles: true }));
+  };
 
-  await sleep(50);
-  originalInput.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true }));
-  await sleep(100);
+  let optionEls = await captureOptionsOnMutation(openDropdown);
 
   if (optionEls.length > 0) {
-    return optionEls
-      .map((el) => ({
-        el,
-        value: el.dataset?.value ?? el.getAttribute("data-value") ?? el.textContent?.trim(),
-        label: el.textContent?.trim(),
-      }))
-      .filter((o) => o.label?.trim());
+    // Close dropdown
+    trigger.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true }));
+    await sleep(100);
+    return optionEls.map(extractOptionData).filter((o) => o.label);
+  }
+
+  // 6. Fallback: search within container of the input
+  const container = originalInput.closest(
+    '[data-select-container], .select-container, [role="combobox"]',
+  );
+  if (container) {
+    const allOptions = container.querySelectorAll(
+      'option, [role="option"], .option, .item, .dropdown-item, [data-option]',
+    );
+    if (allOptions.length) {
+      return Array.from(allOptions)
+        .map(extractOptionData)
+        .filter((o) => o.label);
+    }
+  }
+
+  // 7. Last resort: any visible option-like elements in the whole page
+  const anyOptions = document.querySelectorAll(
+    '[role="option"], [data-option], [data-value], .option, .item, .dropdown-item',
+  );
+  const visibleOptions = Array.from(anyOptions).filter(
+    (el) => el.offsetParent !== null && el.textContent?.trim(),
+  );
+  if (visibleOptions.length) {
+    return visibleOptions.map(extractOptionData).filter((o) => o.label);
   }
 
   return [];
 }
 
 // ─── LLM DROPDOWN MATCHER ─────────────────────────────────────────────────────
-async function getMatchFromLLM(fieldLabel, options, applicantContext) {
+async function getMatchFromLLM(fieldLabel, optionLabels, applicantContext) {
   const { apiKey, model } = await getApiSettings();
-  const optionLabels = [...new Set(options.map((o) => o.label))];
 
   const prompt = `
-You are filling out a job application form.
-Field: "${fieldLabel}"
-Available options:
-${optionLabels.join(", ")}
-Based on the applicant data below (resume and/or profile), return ONLY one exact option from the available options.
-No explanation. No punctuation. No extra text. Just the option.
-Applicant data:
-${applicantContext}
-  `.trim();
+You are selecting a value for a job application dropdown.
+
+Field:
+"${fieldLabel}"
+
+Available Options:
+${optionLabels}
+
+Instructions:
+- Compare the applicant context with ONLY the available options.
+- Select the SINGLE best matching option from the Available Options.
+- NEVER return a value that is not present in the Available Options.
+- If the applicant's exact value is not available, choose the closest available option.
+- Do NOT copy values from the applicant context unless they exist in the Available Options.
+- Your response MUST exactly match one of the Available Options.
+- Return ONLY the selected option label.
+`;
 
   const response = await fetch("https://openrouter.ai/api/v1/chat/completions", {
     method: "POST",
@@ -1499,6 +1675,7 @@ ${applicantContext}
 
   const data = await response.json();
   const chosenLabel = data?.choices?.[0]?.message?.content?.trim();
+  console.log(`LLM match for "${fieldLabel}":`, chosenLabel);
   if (!chosenLabel) {
     console.warn(`LLM empty for "${fieldLabel}"`);
     return null;
@@ -1521,12 +1698,16 @@ async function fillDropdownFields(dropdownField, applicantContext) {
       return;
     }
 
-    // ── Native <select> — simple .value assignment works ────────────────
+    // ── 1. Native <select> ──────────────────────────────────────────────────
     if (originalInput.tagName === "SELECT") {
       const options = await extractOptions(originalInput);
-      if (!options.length) return;
+      if (!options.length) {
+        console.warn(`No options for "${dropdownField.label}"`);
+        return;
+      }
 
-      let matchedLabel = await getMatchFromLLM(dropdownField.label, options, applicantContext);
+      const optionLabels = [...new Set(options.map((o) => o.label))];
+      let matchedLabel = await getMatchFromLLM(dropdownField.label, optionLabels, applicantContext);
       matchedLabel = matchedLabel?.trim()?.replace(/^["'`\s]+|["'`\s]+$/g, "");
       if (!matchedLabel) return;
 
@@ -1545,13 +1726,16 @@ async function fillDropdownFields(dropdownField, applicantContext) {
       return;
     }
 
-    // ── Custom dropdown — must open it, click the option element ────────
+    // ── 2. Custom dropdown ──────────────────────────────────────────────────
+
+    // First, extract all available options (this may open/close the dropdown)
     const options = await extractOptions(originalInput);
     if (!options.length) {
-      console.warn(`❌ No options for "${dropdownField.label}"`);
+      console.warn(`No options for "${dropdownField.label}"`);
       return;
     }
 
+    // Match label using LLM
     let matchedLabel = await getMatchFromLLM(dropdownField.label, options, applicantContext);
     matchedLabel = matchedLabel?.trim()?.replace(/^["'`\s]+|["'`\s]+$/g, "");
     if (!matchedLabel) return;
@@ -1565,13 +1749,37 @@ async function fillDropdownFields(dropdownField, applicantContext) {
       return;
     }
 
-    // Re-open the dropdown so the option element is live in the DOM
-    const trigger = getFieldTrigger(originalInput);
-    const optionEls = await captureOptionsOnMutation(() => {
-      trigger.dispatchEvent(new MouseEvent("mousedown", { bubbles: true, cancelable: true }));
-      trigger.click();
-    });
+    // ── Re‑open the dropdown and locate the live DOM element ──────────────
 
+    const trigger = getFieldTrigger(originalInput);
+
+    // Helper to open the dropdown using multiple events
+    const openDropdown = () => {
+      // Click/toggle
+      trigger.dispatchEvent(new MouseEvent("mousedown", { bubbles: true, cancelable: true }));
+      trigger.dispatchEvent(new MouseEvent("mouseup", { bubbles: true }));
+      trigger.click();
+
+      // Some dropdowns open on focus
+      if (originalInput.tagName === "INPUT" || originalInput.tagName === "TEXTAREA") {
+        originalInput.focus();
+      }
+
+      // Some (like Downshift) respond to ArrowDown
+      trigger.dispatchEvent(new KeyboardEvent("keydown", { key: "ArrowDown", bubbles: true }));
+    };
+
+    // Capture the options that appear after opening
+    const optionEls = await captureOptionsOnMutation(openDropdown, 2000);
+
+    if (!optionEls.length) {
+      console.warn(`Dropdown did not open for "${dropdownField.label}"`);
+      // Try to close it anyway
+      trigger.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true }));
+      return;
+    }
+
+    // Find the option element that matches the label (case‑insensitive)
     const targetEl =
       optionEls.find((el) => el.textContent?.trim().toLowerCase() === matchedLabel.toLowerCase()) ??
       optionEls.find((el) =>
@@ -1579,19 +1787,44 @@ async function fillDropdownFields(dropdownField, applicantContext) {
       );
 
     if (!targetEl) {
-      console.warn(`Could not find live DOM element for "${matchedLabel}"`);
-      originalInput.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true }));
+      console.warn(`Live element not found for "${matchedLabel}"`);
+      // Close dropdown
+      trigger.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true }));
       return;
     }
 
-    await sleep(50);
+    // ── Click the option ────────────────────────────────────────────────────
+
+    // Wait a tiny bit to ensure the dropdown is fully rendered
+    await sleep(100);
+
+    // Try multiple events to ensure selection is registered
     targetEl.dispatchEvent(new MouseEvent("mousedown", { bubbles: true, cancelable: true }));
     targetEl.click();
     targetEl.dispatchEvent(new MouseEvent("mouseup", { bubbles: true }));
 
+    // Some dropdowns require a 'change' event on the input after selection
+    if (originalInput.tagName === "INPUT" || originalInput.tagName === "TEXTAREA") {
+      originalInput.dispatchEvent(new Event("input", { bubbles: true }));
+      originalInput.dispatchEvent(new Event("change", { bubbles: true }));
+    }
+
+    // ── Close the dropdown (Escape or click outside) ──────────────────────
+
+    await sleep(100);
+    trigger.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true }));
+
+    // Some dropdowns stay open; if they do, we can blur the input
+    if (originalInput.tagName === "INPUT" || originalInput.tagName === "TEXTAREA") {
+      originalInput.blur();
+    }
+
+    // Final sleep to let any side‑effects settle
     await sleep(200);
+
+    console.log(`✅ Selected "${matched.label}" for "${dropdownField.label}"`);
   } catch (err) {
-    console.error(`Error on "${dropdownField.label}":`, err);
+    console.error(`Error filling "${dropdownField.label}":`, err);
   }
 }
 
