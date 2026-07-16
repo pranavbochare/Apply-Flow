@@ -1685,146 +1685,183 @@ Instructions:
 }
 
 // ─── FILL DROPDOWN ────────────────────────────────────────────────────────────
+// ─── FILL DROPDOWN (10‑Step Workflow) ─────────────────────────────────────────
 async function fillDropdownFields(dropdownField, applicantContext) {
   try {
+    // 0. Validate input
     if (!dropdownField?.selector) {
-      console.warn("Missing selector:", dropdownField);
+      console.warn("Missing selector for dropdown:", dropdownField);
       return;
     }
 
+    // 1. Find the clickable dropdown trigger (and the input element)
     const originalInput = document.querySelector(dropdownField.selector);
     if (!originalInput) {
-      console.warn(`Not found: "${dropdownField.label}" (${dropdownField.selector})`);
+      console.warn(
+        `Dropdown element not found: "${dropdownField.label}" (${dropdownField.selector})`,
+      );
       return;
     }
 
-    // ── 1. Native <select> ──────────────────────────────────────────────────
+    const trigger = getFieldTrigger(originalInput);
+
+    // ── Native <select> – simplified ──────────────────────────────────────
     if (originalInput.tagName === "SELECT") {
+      // Extract options directly (no need to click)
       const options = await extractOptions(originalInput);
       if (!options.length) {
-        console.warn(`No options for "${dropdownField.label}"`);
+        console.warn(`No options for native select "${dropdownField.label}"`);
         return;
       }
-
       const optionLabels = [...new Set(options.map((o) => o.label))];
-      let matchedLabel = await getMatchFromLLM(dropdownField.label, optionLabels, applicantContext);
-      matchedLabel = matchedLabel?.trim()?.replace(/^["'`\s]+|["'`\s]+$/g, "");
+      const matchedLabel = await getMatchFromLLM(
+        dropdownField.label,
+        optionLabels,
+        applicantContext,
+      );
       if (!matchedLabel) return;
 
       const matched =
-        options.find((o) => o.label.toLowerCase() === matchedLabel.toLowerCase()) ??
+        options.find((o) => o.label.toLowerCase() === matchedLabel.toLowerCase()) ||
         options.find((o) => o.label.toLowerCase().includes(matchedLabel.toLowerCase()));
-
       if (!matched) {
-        console.warn(`No option matched "${matchedLabel}" for "${dropdownField.label}"`);
+        console.warn(`No native option matched "${matchedLabel}" for "${dropdownField.label}"`);
         return;
       }
 
       originalInput.value = matched.value;
       originalInput.dispatchEvent(new Event("change", { bubbles: true }));
       originalInput.dispatchEvent(new Event("input", { bubbles: true }));
+      console.log(`✅ Native select "${dropdownField.label}" → "${matched.label}"`);
       return;
     }
 
-    // ── 2. Custom dropdown ──────────────────────────────────────────────────
+    // ── Custom dropdown – 10‑step workflow ──────────────────────────────
 
-    // First, extract all available options (this may open/close the dropdown)
-    const options = await extractOptions(originalInput);
-    if (!options.length) {
-      console.warn(`No options for "${dropdownField.label}"`);
-      return;
-    }
+    // Step 1: Find every clickable dropdown – already have trigger.
+    console.log(`[1] Found dropdown: "${dropdownField.label}"`);
 
-    // Match label using LLM
-    let matchedLabel = await getMatchFromLLM(dropdownField.label, options, applicantContext);
-    matchedLabel = matchedLabel?.trim()?.replace(/^["'`\s]+|["'`\s]+$/g, "");
-    if (!matchedLabel) return;
-
-    const matched =
-      options.find((o) => o.label.toLowerCase() === matchedLabel.toLowerCase()) ??
-      options.find((o) => o.label.toLowerCase().includes(matchedLabel.toLowerCase()));
-
-    if (!matched) {
-      console.warn(`No option matched "${matchedLabel}" for "${dropdownField.label}"`);
-      return;
-    }
-
-    // ── Re‑open the dropdown and locate the live DOM element ──────────────
-
-    const trigger = getFieldTrigger(originalInput);
-
-    // Helper to open the dropdown using multiple events
+    // Step 2: Click one – open the dropdown.
+    console.log("[2] Clicking dropdown trigger...");
     const openDropdown = () => {
-      // Click/toggle
+      // Try multiple events to ensure opening
       trigger.dispatchEvent(new MouseEvent("mousedown", { bubbles: true, cancelable: true }));
       trigger.dispatchEvent(new MouseEvent("mouseup", { bubbles: true }));
       trigger.click();
-
-      // Some dropdowns open on focus
       if (originalInput.tagName === "INPUT" || originalInput.tagName === "TEXTAREA") {
         originalInput.focus();
       }
-
-      // Some (like Downshift) respond to ArrowDown
       trigger.dispatchEvent(new KeyboardEvent("keydown", { key: "ArrowDown", bubbles: true }));
     };
+    openDropdown();
 
-    // Capture the options that appear after opening
-    const optionEls = await captureOptionsOnMutation(openDropdown, 2000);
-
+    // Step 3: Wait for DOM changes (options to appear).
+    console.log("[3] Waiting for popup to appear...");
+    const optionEls = await captureOptionsOnMutation(() => {}, 3000); // Already triggered above, just observe.
     if (!optionEls.length) {
-      console.warn(`Dropdown did not open for "${dropdownField.label}"`);
-      // Try to close it anyway
+      console.warn(`[4] No popup detected for "${dropdownField.label}"`);
+      // Attempt to close dropdown
       trigger.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true }));
       return;
     }
 
-    // Find the option element that matches the label (case‑insensitive)
-    const targetEl =
-      optionEls.find((el) => el.textContent?.trim().toLowerCase() === matchedLabel.toLowerCase()) ??
-      optionEls.find((el) =>
-        el.textContent?.trim().toLowerCase().includes(matchedLabel.toLowerCase()),
-      );
+    // Step 4: Detect the popup – we have the option elements.
+    console.log(`[4] Popup detected, found ${optionEls.length} option(s).`);
 
-    if (!targetEl) {
-      console.warn(`Live element not found for "${matchedLabel}"`);
-      // Close dropdown
+    // Step 5: Extract every option (labels and values).
+    console.log("[5] Extracting options...");
+    const options = optionEls
+      .map((el) => {
+        let label = el.textContent?.trim() || "";
+        let value =
+          el.dataset?.value ?? el.getAttribute("data-value") ?? el.getAttribute("value") ?? label;
+        return { el, value, label };
+      })
+      .filter((o) => o.label);
+    if (!options.length) {
+      console.warn(`[5] No valid options extracted for "${dropdownField.label}"`);
       trigger.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true }));
       return;
     }
 
-    // ── Click the option ────────────────────────────────────────────────────
+    // Step 6: Send options to AI.
+    console.log("[6] Sending options to AI...");
+    const optionLabels = [...new Set(options.map((o) => o.label))];
+    let matchedLabel = await getMatchFromLLM(dropdownField.label, optionLabels, applicantContext);
+    matchedLabel = matchedLabel?.trim()?.replace(/^["'`\s]+|["'`\s]+$/g, "");
+    if (!matchedLabel) {
+      console.warn(`[6] AI did not return a match for "${dropdownField.label}"`);
+      trigger.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true }));
+      return;
+    }
 
+    // Find best match among options
+    const matched =
+      options.find((o) => o.label.toLowerCase() === matchedLabel.toLowerCase()) ||
+      options.find((o) => o.label.toLowerCase().includes(matchedLabel.toLowerCase()));
+    if (!matched) {
+      console.warn(`[7] No option matched "${matchedLabel}" for "${dropdownField.label}"`);
+      trigger.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true }));
+      return;
+    }
+
+    // Step 7: Receive best match – we have matched.
+    console.log(`[7] AI best match: "${matched.label}"`);
+
+    // Step 8: Click it (the matched option).
+    console.log("[8] Clicking matched option...");
     // Wait a tiny bit to ensure the dropdown is fully rendered
     await sleep(100);
-
-    // Try multiple events to ensure selection is registered
+    const targetEl = matched.el;
     targetEl.dispatchEvent(new MouseEvent("mousedown", { bubbles: true, cancelable: true }));
     targetEl.click();
     targetEl.dispatchEvent(new MouseEvent("mouseup", { bubbles: true }));
 
-    // Some dropdowns require a 'change' event on the input after selection
+    // Some dropdowns require additional events
     if (originalInput.tagName === "INPUT" || originalInput.tagName === "TEXTAREA") {
       originalInput.dispatchEvent(new Event("input", { bubbles: true }));
       originalInput.dispatchEvent(new Event("change", { bubbles: true }));
     }
 
-    // ── Close the dropdown (Escape or click outside) ──────────────────────
+    // Step 9: Verify the value.
+    console.log("[9] Verifying value...");
+    await sleep(200); // allow state to update
+    let selectedText = null;
+    // Check if the dropdown shows the selected value
+    const selectedDisplay =
+      trigger.querySelector(
+        '[class*="single-value"], .selected-value, .select__single-value, .dropdown-selected',
+      ) || trigger.querySelector('[class*="placeholder"]'); // sometimes the placeholder is replaced
+    if (selectedDisplay) {
+      selectedText = selectedDisplay.textContent?.trim();
+    }
+    // Also check the original input value if it's an input field
+    const inputValue = originalInput.value?.trim();
+    const finalValue = selectedText || inputValue || "";
 
+    if (finalValue && finalValue.toLowerCase() === matched.label.toLowerCase()) {
+      console.log(`✅ Verified: "${finalValue}" matches expected "${matched.label}"`);
+    } else {
+      console.warn(`⚠️ Verification failed. Expected "${matched.label}", got "${finalValue}"`);
+      // Attempt to set value directly as fallback
+      if (originalInput.tagName === "INPUT" || originalInput.tagName === "TEXTAREA") {
+        originalInput.value = matched.label;
+        originalInput.dispatchEvent(new Event("input", { bubbles: true }));
+        originalInput.dispatchEvent(new Event("change", { bubbles: true }));
+      }
+    }
+
+    // Close the dropdown (Step 9.5 – cleanup)
     await sleep(100);
     trigger.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true }));
-
-    // Some dropdowns stay open; if they do, we can blur the input
     if (originalInput.tagName === "INPUT" || originalInput.tagName === "TEXTAREA") {
       originalInput.blur();
     }
 
-    // Final sleep to let any side‑effects settle
-    await sleep(200);
-
-    console.log(`✅ Selected "${matched.label}" for "${dropdownField.label}"`);
+    // Step 10: Continue to the next field – done, return.
+    console.log(`[10] Finished dropdown "${dropdownField.label}"`);
   } catch (err) {
-    console.error(`Error filling "${dropdownField.label}":`, err);
+    console.error(`Error filling dropdown "${dropdownField.label}":`, err);
   }
 }
 
