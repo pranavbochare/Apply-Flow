@@ -368,7 +368,7 @@ class FormFieldExtractor {
     return true;
   }
 
-  // ---- label detection (enhanced with many strategies) ----
+  // ---- label detection (enhanced) ----
   _findLabelText(el) {
     const strategies = [
       ["for-attribute", () => this._getLabelViaForAttribute(el)],
@@ -1506,7 +1506,7 @@ function getDisplayLabelAndPlaceholder(field) {
   return { displayLabel: label, placeholderText: placeholderText };
 }
 
-// ---- prompt for missing values (IMPROVED) ----
+// ---- prompt for missing values ----
 async function promptForMissingValues(missingFields, profileData) {
   return new Promise((resolve) => {
     const sidebar = getOrCreateSidebar();
@@ -1792,7 +1792,7 @@ ${applicantContext}
       }
     }
 
-    // ---- Build form fields with improved helper ----
+    // Build form fields
     missingFields.forEach((field) => {
       const { displayLabel, placeholderText } = getDisplayLabelAndPlaceholder(field);
 
@@ -2171,13 +2171,19 @@ function isOptionElement(node) {
 /**
  * Extract options from a dropdown, returning array of { value, label, element }.
  * Handles native selects, already-visible menus, and opens+observes for dynamic ones.
+ * Returns empty array if no options found.
  */
 async function extractOptions(triggerEl, originalInput) {
   // Native select
   if (originalInput && originalInput.tagName === "SELECT") {
-    return Array.from(originalInput.options)
-      .filter((o) => o.text?.trim())
-      .map((o) => ({ value: o.value, label: o.text.trim(), element: o }));
+    const opts = Array.from(originalInput.options)
+      .filter((o) => o.value && o.value.trim() && o.text && o.text.trim())
+      .map((o) => ({
+        value: o.value.trim(),
+        label: o.text.trim(),
+        element: o,
+      }));
+    return opts;
   }
 
   // Already visible menus
@@ -2365,12 +2371,13 @@ Instructions:
 
 /**
  * Main function to fill a single dropdown field.
+ * Returns true if successfully filled, false otherwise (e.g., no options).
  */
 async function fillDropdownFields(dropdownField, applicantContext) {
   try {
     if (!dropdownField?.selector) {
       console.warn("Missing selector for dropdown:", dropdownField);
-      return;
+      return false;
     }
 
     const originalInput = document.querySelector(dropdownField.selector);
@@ -2378,13 +2385,18 @@ async function fillDropdownFields(dropdownField, applicantContext) {
       console.warn(
         `Dropdown element not found: "${dropdownField.label}" (${dropdownField.selector})`,
       );
-      return;
+      return false;
+    }
+
+    // If already has a value, skip (but our extractor usually excludes filled, but just in case)
+    if (originalInput.value && originalInput.value.trim()) {
+      return true;
     }
 
     const trigger = findDropdownTrigger(originalInput);
     if (!trigger) {
       console.warn(`Could not find trigger for dropdown "${dropdownField.label}"`);
-      return;
+      return false;
     }
 
     // Native select
@@ -2392,16 +2404,27 @@ async function fillDropdownFields(dropdownField, applicantContext) {
       const options = await extractOptions(trigger, originalInput);
       if (!options.length) {
         console.warn(`No options for native select "${dropdownField.label}"`);
-        return;
+        return false;
       }
       const matched = await matchOptionWithLLM(dropdownField.label, options, applicantContext);
-      if (!matched) return;
+      if (!matched) return false;
 
+      // Set value and selectedIndex
       originalInput.value = matched.value;
+      // Also set selectedIndex for safety
+      for (let i = 0; i < originalInput.options.length; i++) {
+        if (originalInput.options[i].value === matched.value) {
+          originalInput.selectedIndex = i;
+          break;
+        }
+      }
+      // Dispatch events
       originalInput.dispatchEvent(new Event("change", { bubbles: true }));
       originalInput.dispatchEvent(new Event("input", { bubbles: true }));
+      originalInput.focus();
+      originalInput.blur();
       console.log(`✅ Native select "${dropdownField.label}" → "${matched.label}"`);
-      return;
+      return true;
     }
 
     // Custom dropdown
@@ -2418,14 +2441,14 @@ async function fillDropdownFields(dropdownField, applicantContext) {
     if (!options.length) {
       console.warn(`No options extracted for "${dropdownField.label}"`);
       trigger.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true }));
-      return;
+      return false;
     }
 
     // Match with LLM
     const matched = await matchOptionWithLLM(dropdownField.label, options, applicantContext);
     if (!matched) {
       trigger.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true }));
-      return;
+      return false;
     }
 
     // Click the matched option
@@ -2469,6 +2492,7 @@ async function fillDropdownFields(dropdownField, applicantContext) {
     } else {
       console.log(`✅ Custom dropdown "${dropdownField.label}" → "${matched.label}"`);
     }
+    return true;
   } catch (err) {
     console.error(`Error filling dropdown "${dropdownField.label}":`, err);
     try {
@@ -2478,6 +2502,7 @@ async function fillDropdownFields(dropdownField, applicantContext) {
       if (trigger)
         trigger.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true }));
     } catch (_) {}
+    return false;
   }
 }
 
@@ -2513,13 +2538,37 @@ async function performAutoApply(resumeData, profileData) {
       }
     }
 
-    // 2. Dropdown fields (using improved logic)
+    // 2. Dropdown fields
     const dropdownFields = extractedFields.filter((field) => field.isDropdown === true);
+    const failedDropdowns = [];
     if (dropdownFields.length) {
       for (let i = 0; i < dropdownFields.length; i++) {
         updateSidebarLoader(`Filling dropdown fields (${i + 1}/${dropdownFields.length})...`);
-        await fillDropdownFields(dropdownFields[i], applicantContext);
+        const success = await fillDropdownFields(dropdownFields[i], applicantContext);
+        if (!success) {
+          // Add to failed list for manual prompt
+          failedDropdowns.push(dropdownFields[i]);
+        }
       }
+    }
+
+    // If any dropdowns failed, prompt user for those fields
+    if (failedDropdowns.length > 0) {
+      hideSidebarLoader(); // hide loader before modal
+      const { values: manualValues } = await promptForMissingValues(failedDropdowns, profileData);
+      // Fill each failed dropdown with user's answer
+      for (const [key, value] of Object.entries(manualValues)) {
+        const field = failedDropdowns.find((f) => f.key === key);
+        if (field && value) {
+          const element = findFieldElement(field);
+          if (element) {
+            // Try to fill as text input (since dropdown failed, it's likely a text field misclassified)
+            fillInputField(element, value);
+          }
+        }
+      }
+      // Re-show loader after modal closes (though we're about to continue with other steps)
+      showSidebarLoader("Continuing...");
     }
 
     // 3. Normal text/textarea fields via LLM
