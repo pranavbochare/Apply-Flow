@@ -706,14 +706,14 @@ function saveProfile() {
 
   const status = document.getElementById("statusMessage");
 
-  // const error = validateProfile(profileData);
-  // if (error) {
-  //   if (status) {
-  //     status.textContent = error;
-  //     status.style.color = "red";
-  //   }
-  //   return;
-  // }
+  const error = validateProfile(profileData);
+  if (error) {
+    if (status) {
+      status.textContent = error;
+      status.style.color = "red";
+    }
+    return;
+  }
 
   setLoadingState(
     true,
