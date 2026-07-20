@@ -1,3 +1,6 @@
+// ============================================================
+// FIELD_SELECTOR – includes custom dropdown buttons
+// ============================================================
 const FIELD_SELECTOR = [
   "input:not([type=hidden]):not([type=submit]):not([type=button]):not([type=reset]):not([type=image]):not([type=radio])",
   "textarea",
@@ -8,15 +11,23 @@ const FIELD_SELECTOR = [
   '[role="spinbutton"]',
   '[contenteditable=""]',
   '[contenteditable="true"]',
+  // --- custom dropdown buttons (Workday, etc.) ---
+  '[aria-haspopup="listbox"]',
+  '[aria-haspopup="menu"]',
+  '[aria-haspopup="true"]',
 ].join(",\n  ");
 
+// ============================================================
+// FormFieldExtractor class
+// ============================================================
 class FormFieldExtractor {
   constructor(options = {}) {
     this.options = {
-      includeFilled: false, // if true, fields that already have a value are still returned
-      includeHidden: false, // if true, invisible fields are still returned
+      includeFilled: false,
+      includeHidden: false,
+      includeDisabled: false,  // <-- includes disabled fields when true
       enableLLMFallback: false,
-      llmAnalyzer: null, // async (contexts) => [{key, guessedLabel, confidence}]
+      llmAnalyzer: null,
       ...options,
     };
 
@@ -25,7 +36,6 @@ class FormFieldExtractor {
     this.usedKeys = new Set();
     this.crossOriginIframes = [];
 
-    // MutationObserver bookkeeping
     this._rootObserver = null;
     this._shadowObservers = [];
     this._observedShadowRoots = new Set();
@@ -41,16 +51,11 @@ class FormFieldExtractor {
     return this.results;
   }
 
-  /** Extract, then resolve ambiguous labels via the configured LLM analyzer. */
   async extractWithLLMFallback(root = document) {
     const fields = this.extract(root);
     return this._resolveAmbiguousLabels(fields);
   }
 
-  /**
-   * Start watching the DOM (and any shadow roots discovered) for changes,
-   * re-running extraction (debounced) and invoking `callback(fields)`.
-   */
   startObserving(callback, { debounceMs = 300 } = {}) {
     this.stopObserving();
 
@@ -80,8 +85,6 @@ class FormFieldExtractor {
       attributeFilter: ["style", "class", "disabled", "value", "contenteditable", "hidden"],
     });
 
-    // Shadow roots don't get covered by a document-level observer, so attach
-    // one to each shadow root we can find, recursively.
     this._attachShadowObservers(document, trigger);
   }
 
@@ -93,11 +96,6 @@ class FormFieldExtractor {
     this._observedShadowRoots = new Set();
   }
 
-  /**
-   * Attempt to set a value on a field such that React (or plain JS) picks it
-   * up as a real user-driven change. Needed because React overrides the
-   * native value setter on controlled inputs.
-   */
   setFieldValue(el, value) {
     if (el.isContentEditable) {
       el.textContent = value;
@@ -122,7 +120,7 @@ class FormFieldExtractor {
   }
 
   // ============================================================
-  // Traversal (DOM + shadow DOM + same-origin iframes)
+  // Traversal
   // ============================================================
 
   _walk(root) {
@@ -143,10 +141,9 @@ class FormFieldExtractor {
   _walkIframe(iframeEl) {
     try {
       const doc = iframeEl.contentDocument;
-      if (!doc) return; // not yet loaded
+      if (!doc) return;
       this._walk(doc);
     } catch (e) {
-      // Cross-origin iframe: cannot be inspected from the parent frame.
       this.crossOriginIframes.push({
         selector: this._buildSelector(iframeEl),
         src: iframeEl.getAttribute("src") || null,
@@ -172,7 +169,8 @@ class FormFieldExtractor {
 
   _processElements(elements) {
     elements.forEach((el) => {
-      if (el.disabled) return;
+      // Skip disabled only if not explicitly included
+      if (el.disabled && !this.options.includeDisabled) return;
 
       if (!this.options.includeFilled && this._hasValue(el)) return;
       if (!this.options.includeHidden && !this._isVisible(el)) return;
@@ -189,7 +187,13 @@ class FormFieldExtractor {
     if (el.isContentEditable) {
       return (el.textContent || "").trim().length > 0;
     }
-    if (el.tagName === "SELECT") return false; // selects are always worth surfacing
+    if (el.tagName === "SELECT") return false;
+    // For custom dropdown buttons, treat default placeholder text as empty
+    if (el.tagName === "BUTTON" && el.hasAttribute("aria-haspopup")) {
+      const text = (el.textContent || "").trim();
+      const placeholder = /select\s+one/i.test(text) || text === "";
+      return !placeholder;
+    }
     const reactVal = this._getReactValue(el);
     const val = (reactVal ?? el.value ?? "").toString().trim();
     return val.length > 0;
@@ -198,10 +202,13 @@ class FormFieldExtractor {
   _buildFieldRecord(el) {
     const label = this._findLabelText(el);
     const locator = this._getElementLocator(el);
+
+    // Determine if this is a dropdown (native or custom)
     const isDropdown =
       el.tagName === "SELECT" ||
       el.getAttribute("role") === "combobox" ||
-      el.getAttribute("role") === "listbox";
+      el.getAttribute("role") === "listbox" ||
+      (el.tagName === "BUTTON" && el.hasAttribute("aria-haspopup"));
 
     const baseKey = label.text || el.name || el.id || el.type || el.tagName.toLowerCase();
     const key = this._createUniqueKey(baseKey);
@@ -220,7 +227,7 @@ class FormFieldExtractor {
       label: label.text || null,
       labelSource: label.source || null,
       labelConfidence: label.text ? (label.source === "placeholder" ? "low" : "high") : "none",
-      locator, // { frames: [...], shadowHosts: [...], selector }
+      locator,
       value: this._getCurrentValue(el),
       isDropdown,
       a11y: this._getAccessibilityAttrs(el),
@@ -278,7 +285,6 @@ class FormFieldExtractor {
     const rect = el.getBoundingClientRect();
     if (rect.width === 0 && rect.height === 0) return false;
 
-    // Heuristic: far off-screen positioning used to visually hide elements
     if (
       rect.bottom < -window.innerHeight * 5 ||
       rect.top > window.innerHeight * 6 ||
@@ -292,7 +298,7 @@ class FormFieldExtractor {
   }
 
   // ============================================================
-  // Label detection strategies
+  // Label detection (unchanged, included for completeness)
   // ============================================================
 
   _findLabelText(el) {
@@ -315,9 +321,7 @@ class FormFieldExtractor {
       let text = null;
       try {
         text = fn();
-      } catch (e) {
-        // Individual strategy failures shouldn't break extraction.
-      }
+      } catch (e) {}
       const cleaned = this._cleanLabelText(text);
       if (cleaned) {
         return { text: cleaned, source };
@@ -326,10 +330,6 @@ class FormFieldExtractor {
     return { text: null, source: null };
   }
 
-  /**
-   * Strips whitespace and trailing "required" markers (*, (required), etc.)
-   * that often ride along with label text.
-   */
   _cleanLabelText(text) {
     if (!text) return null;
     const collapsed = text.toString().trim().replace(/\s+/g, " ");
@@ -341,21 +341,6 @@ class FormFieldExtractor {
     return withoutRequiredMarker || null;
   }
 
-  /**
-   * Handles the very common ATS pattern where a field's label lives in a
-   * sibling *wrapper div*, not a sibling of the field itself:
-   *
-   *   <div>
-   *     <div class="application-label ..."><div class="text">Current Location
-   *       <span class="required">*</span></div></div>
-   *     <div class="application-field ..."><textarea ...></textarea></div>
-   *   </div>
-   *
-   * Walks up from the field, and at each ancestor level looks for a sibling
-   * element whose class name (or tag) suggests it's a label container
-   * ("label", "question", "field-title", <label>, etc.), then extracts its
-   * text with required-markers/icons/buttons stripped out.
-   */
   _getAncestorSiblingLabel(el) {
     let node = el;
     for (let depth = 0; depth < 6 && node && node.parentElement; depth++) {
@@ -378,7 +363,6 @@ class FormFieldExtractor {
     return null;
   }
 
-  /** Deep-clones an element and strips required-markers/icons/controls before reading textContent. */
   _extractCleanElementText(el) {
     const clone = el.cloneNode(true);
     clone
@@ -498,7 +482,7 @@ class FormFieldExtractor {
   }
 
   // ============================================================
-  // Accessibility attributes
+  // Accessibility
   // ============================================================
 
   _getAccessibilityAttrs(el) {
@@ -515,7 +499,7 @@ class FormFieldExtractor {
   }
 
   // ============================================================
-  // React-specific handling
+  // React-specific
   // ============================================================
 
   _getReactPropsKey(el) {
@@ -543,17 +527,22 @@ class FormFieldExtractor {
       const opt = el.options[el.selectedIndex];
       return opt ? opt.textContent.trim() : null;
     }
+    // Custom dropdown button: prefer textContent if it's not placeholder
+    if (el.tagName === "BUTTON" && el.hasAttribute("aria-haspopup")) {
+      const text = (el.textContent || "").trim();
+      if (text && !/select\s+one/i.test(text)) {
+        return text;
+      }
+      // fallback to value attribute
+      return el.value || null;
+    }
     const reactVal = this._getReactValue(el);
     if (reactVal !== null && typeof reactVal !== "undefined") return reactVal;
     return el.value || null;
   }
 
   // ============================================================
-  // Locators (CSS selector + shadow-host path + iframe path)
-  //
-  // A plain CSS selector can't cross shadow-DOM or iframe boundaries, so the
-  // locator records the chain of shadow hosts / iframes that must be
-  // traversed first, then the selector for the element within its own root.
+  // Locators (unchanged)
   // ============================================================
 
   _buildSelector(el) {
@@ -601,7 +590,7 @@ class FormFieldExtractor {
         frames.unshift(this._buildSelector(frameEl));
         win = win.parent;
       } catch (e) {
-        break; // cross-origin, can't go further up
+        break;
       }
     }
 
@@ -609,7 +598,7 @@ class FormFieldExtractor {
   }
 
   // ============================================================
-  // Fingerprinting (dedup across repeated traversals / re-renders)
+  // Fingerprinting (unchanged)
   // ============================================================
 
   _fingerprint(el) {
@@ -650,7 +639,7 @@ class FormFieldExtractor {
   }
 
   // ============================================================
-  // Optional LLM semantic fallback
+  // LLM fallback (unchanged)
   // ============================================================
 
   async _resolveAmbiguousLabels(fields) {
@@ -691,10 +680,13 @@ class FormFieldExtractor {
   }
 }
 
-// Expose for both browser (content script / global) and module usage.
+// ============================================================
+// Expose
+// ============================================================
 if (typeof window !== "undefined") {
   window.FormFieldExtractor = FormFieldExtractor;
 }
 if (typeof module !== "undefined" && module.exports) {
   module.exports = FormFieldExtractor;
 }
+
