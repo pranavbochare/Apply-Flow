@@ -1,6 +1,3 @@
-// ============================================================
-// FIELD_SELECTOR – includes custom dropdown buttons
-// ============================================================
 const FIELD_SELECTOR = [
   "input:not([type=hidden]):not([type=submit]):not([type=button]):not([type=reset]):not([type=image]):not([type=radio])",
   "textarea",
@@ -16,9 +13,6 @@ const FIELD_SELECTOR = [
   '[aria-haspopup="true"]',
 ].join(",\n  ");
 
-// ============================================================
-// FormFieldExtractor – enhanced label detection
-// ============================================================
 class FormFieldExtractor {
   constructor(options = {}) {
     this.options = {
@@ -837,19 +831,12 @@ class FormFieldExtractor {
   }
 }
 
-// ============================================================
-// Expose FormFieldExtractor globally
-// ============================================================
 if (typeof window !== "undefined") {
   window.FormFieldExtractor = FormFieldExtractor;
 }
 if (typeof module !== "undefined" && module.exports) {
   module.exports = FormFieldExtractor;
 }
-
-// ============================================================
-// Content Script Main Functions
-// ============================================================
 
 // ---- create floating bot ----
 function createFloatingBot() {
@@ -2116,10 +2103,6 @@ function autoFillFileInput(fileInput, file) {
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
-// ============================================================
-// IMPROVED DROPDOWN FILLING LOGIC
-// ============================================================
-
 /**
  * Find the trigger element for a dropdown (button/div that opens the menu).
  * Handles native select, custom buttons, and various frameworks.
@@ -2308,7 +2291,6 @@ async function matchOptionWithLLM(fieldLabel, options, applicantContext) {
   const contextLower = applicantContext.toLowerCase();
   const exactMatch = options.find((o) => contextLower.includes(o.label.toLowerCase()));
   if (exactMatch) {
-    console.log(`Exact match found in context: "${exactMatch.label}"`);
     return exactMatch;
   }
 
@@ -2426,7 +2408,6 @@ async function fillDropdownFields(dropdownField, applicantContext) {
       originalInput.dispatchEvent(new Event("input", { bubbles: true }));
       originalInput.focus();
       originalInput.blur();
-      console.log(`✅ Native select "${dropdownField.label}" → "${matched.label}"`);
       return true;
     }
 
@@ -2492,8 +2473,6 @@ async function fillDropdownFields(dropdownField, applicantContext) {
         originalInput.dispatchEvent(new Event("input", { bubbles: true }));
         originalInput.dispatchEvent(new Event("change", { bubbles: true }));
       }
-    } else {
-      console.log(`✅ Custom dropdown "${dropdownField.label}" → "${matched.label}"`);
     }
     return true;
   } catch (err) {
@@ -2524,7 +2503,6 @@ async function performAutoApply(resumeData, profileData) {
 
   try {
     const extractedFields = extractFormFields();
-    console.log("extracted from fields ------------> ", extractedFields);
 
     const applicantContext = buildApplicantContext(resumeData, profileData);
     if (!applicantContext.trim()) {

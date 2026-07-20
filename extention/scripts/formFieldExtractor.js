@@ -1,6 +1,3 @@
-// ============================================================
-// FIELD_SELECTOR – matches interactive form elements
-// ============================================================
 const FIELD_SELECTOR = [
   "input:not([type=hidden]):not([type=submit]):not([type=button]):not([type=reset]):not([type=image]):not([type=radio])",
   "textarea",
@@ -16,9 +13,6 @@ const FIELD_SELECTOR = [
   '[aria-haspopup="true"]',
 ].join(",\n  ");
 
-// ============================================================
-// FormFieldExtractor class
-// ============================================================
 class FormFieldExtractor {
   constructor(options = {}) {
     this.options = {
@@ -834,9 +828,6 @@ class FormFieldExtractor {
   }
 }
 
-// ============================================================
-// Expose globally
-// ============================================================
 if (typeof window !== "undefined") {
   window.FormFieldExtractor = FormFieldExtractor;
 }

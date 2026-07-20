@@ -449,7 +449,6 @@ if (uploadBox) {
 }
 
 resumeInput.addEventListener("change", () => {
-  console.log("Resume file selected:", resumeInput.files);
   const file = resumeInput && resumeInput.files && resumeInput.files[0];
   if (file) {
     handleResumeUpload(file);
@@ -571,9 +570,6 @@ async function handleResumeUpload(file) {
 
     const resumeData = resumeJson.resumeData || {};
     const profileData = resumeJson.profileData || {};
-
-    console.log("Extracted Resume Data:", resumeData);
-    console.log("Extracted Profile Data:", profileData);
 
     chrome.storage.local.set({ resume: resumeData }, () => {
       console.log("Resume saved to Chrome storage");
