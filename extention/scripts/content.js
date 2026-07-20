@@ -286,11 +286,14 @@ class FormFieldExtractor {
   _buildFieldRecord(el) {
     const label = this._findLabelText(el);
     const locator = this._getElementLocator(el);
+    // FIX for Indeed: treat text inputs with role=combobox but no aria-haspopup as normal fields
     const isDropdown =
       el.tagName === "SELECT" ||
-      el.getAttribute("role") === "combobox" ||
       el.getAttribute("role") === "listbox" ||
-      (el.tagName === "BUTTON" && el.hasAttribute("aria-haspopup"));
+      (el.tagName === "BUTTON" && el.hasAttribute("aria-haspopup")) ||
+      // For combobox role: only if it has aria-haspopup OR it's not a plain text input
+      (el.getAttribute("role") === "combobox" &&
+        (el.hasAttribute("aria-haspopup") || el.tagName !== "INPUT" || el.type !== "text"));
 
     const baseKey = label.text || el.name || el.id || el.type || el.tagName.toLowerCase();
     const key = this._createUniqueKey(baseKey);
