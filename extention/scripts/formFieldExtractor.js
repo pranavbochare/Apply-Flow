@@ -1,5 +1,5 @@
 // ============================================================
-// FIELD_SELECTOR – includes custom dropdown buttons
+// FIELD_SELECTOR – matches interactive form elements
 // ============================================================
 const FIELD_SELECTOR = [
   "input:not([type=hidden]):not([type=submit]):not([type=button]):not([type=reset]):not([type=image]):not([type=radio])",
@@ -11,7 +11,6 @@ const FIELD_SELECTOR = [
   '[role="spinbutton"]',
   '[contenteditable=""]',
   '[contenteditable="true"]',
-  // --- custom dropdown buttons (Workday, etc.) ---
   '[aria-haspopup="listbox"]',
   '[aria-haspopup="menu"]',
   '[aria-haspopup="true"]',
@@ -25,7 +24,7 @@ class FormFieldExtractor {
     this.options = {
       includeFilled: false,
       includeHidden: false,
-      includeDisabled: false,  // <-- includes disabled fields when true
+      includeDisabled: false,
       enableLLMFallback: false,
       llmAnalyzer: null,
       ...options,
@@ -96,37 +95,130 @@ class FormFieldExtractor {
     this._observedShadowRoots = new Set();
   }
 
-  setFieldValue(el, value) {
+  // Async setFieldValue – supports custom dropdowns
+  async setFieldValue(el, value, options = {}) {
+    const { closeAfterSelect = true, waitForListbox = 2000 } = options;
+
     if (el.isContentEditable) {
       el.textContent = value;
       el.dispatchEvent(new InputEvent("input", { bubbles: true }));
       return;
     }
+
     const tag = el.tagName;
-    const proto =
-      tag === "TEXTAREA"
-        ? window.HTMLTextAreaElement.prototype
-        : tag === "SELECT"
-          ? window.HTMLSelectElement.prototype
+    if (tag === "TEXTAREA" || tag === "INPUT") {
+      const proto =
+        tag === "TEXTAREA"
+          ? window.HTMLTextAreaElement.prototype
           : window.HTMLInputElement.prototype;
-    const descriptor = Object.getOwnPropertyDescriptor(proto, "value");
-    if (descriptor && descriptor.set) {
-      descriptor.set.call(el, value);
-    } else {
-      el.value = value;
+      const descriptor = Object.getOwnPropertyDescriptor(proto, "value");
+      if (descriptor && descriptor.set) {
+        descriptor.set.call(el, value);
+      } else {
+        el.value = value;
+      }
+      el.dispatchEvent(new Event("input", { bubbles: true }));
+      el.dispatchEvent(new Event("change", { bubbles: true }));
+      return;
     }
-    el.dispatchEvent(new Event("input", { bubbles: true }));
-    el.dispatchEvent(new Event("change", { bubbles: true }));
+
+    if (tag === "SELECT") {
+      const optionsList = Array.from(el.options);
+      const targetOption = optionsList.find((opt) => opt.text.trim() === value);
+      if (targetOption) {
+        el.value = targetOption.value;
+        el.dispatchEvent(new Event("change", { bubbles: true }));
+      }
+      return;
+    }
+
+    // Custom dropdown (button with aria-haspopup)
+    if (tag === "BUTTON" && el.hasAttribute("aria-haspopup")) {
+      el.click();
+      await this._wait(100);
+      const listbox = await this._findListbox(el, waitForListbox);
+      if (!listbox) {
+        console.warn("Could not find dropdown listbox for element", el);
+        return;
+      }
+      const optionItems = Array.from(
+        listbox.querySelectorAll('[role="option"], li, div[role="option"]'),
+      );
+      const targetItem = optionItems.find((item) => item.textContent.trim() === value);
+      if (!targetItem) {
+        console.warn(`Option "${value}" not found in dropdown`, listbox);
+        if (closeAfterSelect) el.click();
+        return;
+      }
+      targetItem.click();
+      await this._wait(100);
+      if (closeAfterSelect) {
+        el.click();
+      }
+      el.dispatchEvent(new Event("change", { bubbles: true }));
+    }
   }
 
-  // ============================================================
-  // Traversal
-  // ============================================================
+  async _findListbox(button, timeout = 2000) {
+    const start = Date.now();
+    while (Date.now() - start < timeout) {
+      const controlsId = button.getAttribute("aria-controls");
+      if (controlsId) {
+        const root = button.getRootNode();
+        const listbox = root.getElementById(controlsId);
+        if (listbox && this._isVisible(listbox)) return listbox;
+      }
+      const parent = button.parentElement;
+      if (parent) {
+        const listbox = parent.querySelector('[role="listbox"], [role="menu"]');
+        if (listbox && this._isVisible(listbox)) return listbox;
+        const sibling = button.nextElementSibling;
+        if (
+          sibling &&
+          sibling.matches('[role="listbox"], [role="menu"]') &&
+          this._isVisible(sibling)
+        ) {
+          return sibling;
+        }
+      }
+      const allListboxes = document.querySelectorAll('[role="listbox"], [role="menu"]');
+      for (const lb of allListboxes) {
+        if (this._isVisible(lb)) {
+          const labelledBy = lb.getAttribute("aria-labelledby");
+          if (labelledBy && button.id && labelledBy.includes(button.id)) {
+            return lb;
+          }
+        }
+      }
+      await this._wait(200);
+    }
+    return null;
+  }
 
+  async getFieldOptions(button, timeout = 2000) {
+    const isOpen = button.getAttribute("aria-expanded") === "true";
+    if (!isOpen) {
+      button.click();
+      await this._wait(100);
+    }
+    const listbox = await this._findListbox(button, timeout);
+    if (!listbox) return [];
+    const items = Array.from(listbox.querySelectorAll('[role="option"], li, div[role="option"]'));
+    const texts = items.map((item) => item.textContent.trim()).filter(Boolean);
+    if (!isOpen) {
+      button.click();
+    }
+    return texts;
+  }
+
+  _wait(ms) {
+    return new Promise((resolve) => setTimeout(resolve, ms));
+  }
+
+  // ---- traversal ----
   _walk(root) {
     const matched = Array.from(root.querySelectorAll(FIELD_SELECTOR));
     this._processElements(matched);
-
     const all = root.querySelectorAll("*");
     all.forEach((el) => {
       if (el.shadowRoot) {
@@ -163,22 +255,15 @@ class FormFieldExtractor {
     });
   }
 
-  // ============================================================
-  // Element processing
-  // ============================================================
-
+  // ---- processing ----
   _processElements(elements) {
     elements.forEach((el) => {
-      // Skip disabled only if not explicitly included
       if (el.disabled && !this.options.includeDisabled) return;
-
       if (!this.options.includeFilled && this._hasValue(el)) return;
       if (!this.options.includeHidden && !this._isVisible(el)) return;
-
       const fp = this._fingerprint(el);
       if (this.fingerprints.has(fp)) return;
       this.fingerprints.add(fp);
-
       this.results.push(this._buildFieldRecord(el));
     });
   }
@@ -188,7 +273,6 @@ class FormFieldExtractor {
       return (el.textContent || "").trim().length > 0;
     }
     if (el.tagName === "SELECT") return false;
-    // For custom dropdown buttons, treat default placeholder text as empty
     if (el.tagName === "BUTTON" && el.hasAttribute("aria-haspopup")) {
       const text = (el.textContent || "").trim();
       const placeholder = /select\s+one/i.test(text) || text === "";
@@ -202,8 +286,6 @@ class FormFieldExtractor {
   _buildFieldRecord(el) {
     const label = this._findLabelText(el);
     const locator = this._getElementLocator(el);
-
-    // Determine if this is a dropdown (native or custom)
     const isDropdown =
       el.tagName === "SELECT" ||
       el.getAttribute("role") === "combobox" ||
@@ -267,46 +349,33 @@ class FormFieldExtractor {
     }
   }
 
-  // ============================================================
-  // Visibility
-  // ============================================================
-
+  // ---- visibility ----
   _isVisible(el) {
     if (!el || !el.isConnected) return false;
-
     const style = window.getComputedStyle(el);
-    if (style.display === "none" || style.visibility === "hidden" || style.opacity === "0") {
+    if (style.display === "none" || style.visibility === "hidden" || style.opacity === "0")
       return false;
-    }
-    if (style.clip === "rect(0px, 0px, 0px, 0px)" || style.clipPath === "inset(100%)") {
-      return false;
-    }
-
+    if (style.clip === "rect(0px, 0px, 0px, 0px)" || style.clipPath === "inset(100%)") return false;
     const rect = el.getBoundingClientRect();
     if (rect.width === 0 && rect.height === 0) return false;
-
     if (
       rect.bottom < -window.innerHeight * 5 ||
       rect.top > window.innerHeight * 6 ||
       rect.right < -window.innerWidth * 5 ||
       rect.left > window.innerWidth * 6
-    ) {
+    )
       return false;
-    }
-
     return true;
   }
 
-  // ============================================================
-  // Label detection (unchanged, included for completeness)
-  // ============================================================
-
+  // ---- label detection (enhanced) ----
   _findLabelText(el) {
     const strategies = [
       ["for-attribute", () => this._getLabelViaForAttribute(el)],
       ["labels-property", () => this._getLabelViaLabelsProperty(el)],
       ["aria-labelledby", () => this._getLabelViaAriaLabelledby(el)],
       ["aria-label", () => el.getAttribute("aria-label")],
+      ["data-label", () => el.getAttribute("data-label") || el.getAttribute("data-question")],
       ["mui-wrapper", () => this._getMuiLabel(el)],
       ["antd-wrapper", () => this._getAntdLabel(el)],
       ["form-group", () => this._getFormGroupLabel(el)],
@@ -314,6 +383,12 @@ class FormFieldExtractor {
       ["table-cell", () => this._getTableCellLabel(el)],
       ["parent-text", () => this._getParentText(el)],
       ["nearby-text", () => this._getNearbyText(el)],
+      ["sibling-question", () => this._getSiblingQuestionText(el)],
+      ["wellfound-label", () => this._getWellfoundLabel(el)],
+      ["ancestor-question", () => this._getAncestorQuestionText(el)],
+      ["closest-question", () => this._getClosestQuestionText(el)],
+      ["label-sibling", () => this._getLabelSibling(el)],
+      ["container-heading", () => this._getContainerHeading(el)],
       ["placeholder", () => this._getPlaceholder(el)],
     ];
 
@@ -330,6 +405,111 @@ class FormFieldExtractor {
     return { text: null, source: null };
   }
 
+  // ---- new label extraction methods ----
+  _getClosestQuestionText(el) {
+    let node = el;
+    let depth = 0;
+    while (node && node.parentElement && depth < 10) {
+      const parent = node.parentElement;
+      const prevSiblings = Array.from(parent.children).filter((child) => child !== node);
+      for (let i = prevSiblings.length - 1; i >= 0; i--) {
+        const sib = prevSiblings[i];
+        const text = sib.textContent.trim();
+        if (text && text.includes("?") && text.length < 200) {
+          return text;
+        }
+      }
+      node = parent;
+      depth++;
+    }
+    return null;
+  }
+
+  _getLabelSibling(el) {
+    let node = el.previousElementSibling;
+    while (node) {
+      if (node.tagName === "LABEL") {
+        return node.textContent.trim();
+      }
+      const label = node.querySelector("label");
+      if (label) return label.textContent.trim();
+      node = node.previousElementSibling;
+    }
+    return null;
+  }
+
+  _getContainerHeading(el) {
+    const container = el.closest(
+      '.question, .field, .form-group, .form-field, [role="group"], fieldset, .MuiFormControl-root, .ant-form-item',
+    );
+    if (container) {
+      const headings = container.querySelectorAll("h1, h2, h3, h4, h5, h6, p, label, span");
+      for (const h of headings) {
+        if (!h.contains(el) && h.textContent.trim()) {
+          const text = h.textContent.trim();
+          if (text.length < 200) return text;
+        }
+      }
+      const clone = container.cloneNode(true);
+      clone.querySelectorAll("input, select, textarea, button").forEach((n) => n.remove());
+      const text = clone.textContent.trim();
+      if (text && text.length < 200) return text;
+    }
+    return null;
+  }
+
+  _getWellfoundLabel(el) {
+    const selectors = [
+      '[data-testid="question"]',
+      ".question",
+      ".question-text",
+      ".form-question",
+      ".input-label",
+      ".field-label",
+      ".label",
+      "[data-question]",
+      "[aria-label]",
+    ];
+    const container = el.closest(selectors.join(","));
+    if (container) {
+      const text = container.textContent.trim();
+      if (text) return text;
+    }
+    return null;
+  }
+
+  _getSiblingQuestionText(el) {
+    let node = el.previousElementSibling;
+    while (node) {
+      const text = node.textContent.trim();
+      if (text && text.includes("?")) {
+        return text;
+      }
+      const children = node.querySelectorAll("*");
+      for (const child of children) {
+        const childText = child.textContent.trim();
+        if (childText && childText.includes("?")) {
+          return childText;
+        }
+      }
+      node = node.previousElementSibling;
+    }
+    return null;
+  }
+
+  _getAncestorQuestionText(el) {
+    let ancestor = el.parentElement;
+    for (let i = 0; i < 6 && ancestor; i++) {
+      const text = ancestor.textContent.trim();
+      if (text && text.includes("?") && text.length < 200) {
+        return text;
+      }
+      ancestor = ancestor.parentElement;
+    }
+    return null;
+  }
+
+  // ---- existing label helpers (unchanged) ----
   _cleanLabelText(text) {
     if (!text) return null;
     const collapsed = text.toString().trim().replace(/\s+/g, " ");
@@ -431,15 +611,12 @@ class FormFieldExtractor {
     const row = cell.closest("tr");
     const table = cell.closest("table");
     if (!row || !table) return null;
-
     const cellIndex = Array.from(row.children).indexOf(cell);
-
     const headerRow = table.querySelector("thead tr") || table.rows[0];
     if (headerRow && headerRow !== row) {
       const headerCell = headerRow.children[cellIndex];
       if (headerCell) return headerCell.textContent;
     }
-
     if (cellIndex > 0) {
       const prevCell = row.children[cellIndex - 1];
       if (prevCell && !prevCell.querySelector("input, select, textarea")) {
@@ -481,10 +658,7 @@ class FormFieldExtractor {
     return el.getAttribute("placeholder") || el.getAttribute("aria-placeholder") || null;
   }
 
-  // ============================================================
-  // Accessibility
-  // ============================================================
-
+  // ---- a11y ----
   _getAccessibilityAttrs(el) {
     const attrs = {};
     Array.from(el.attributes).forEach((a) => {
@@ -498,10 +672,7 @@ class FormFieldExtractor {
     return attrs;
   }
 
-  // ============================================================
-  // React-specific
-  // ============================================================
-
+  // ---- React ----
   _getReactPropsKey(el) {
     return Object.keys(el).find((k) => k.startsWith("__reactProps$"));
   }
@@ -527,13 +698,11 @@ class FormFieldExtractor {
       const opt = el.options[el.selectedIndex];
       return opt ? opt.textContent.trim() : null;
     }
-    // Custom dropdown button: prefer textContent if it's not placeholder
     if (el.tagName === "BUTTON" && el.hasAttribute("aria-haspopup")) {
       const text = (el.textContent || "").trim();
       if (text && !/select\s+one/i.test(text)) {
         return text;
       }
-      // fallback to value attribute
       return el.value || null;
     }
     const reactVal = this._getReactValue(el);
@@ -541,10 +710,7 @@ class FormFieldExtractor {
     return el.value || null;
   }
 
-  // ============================================================
-  // Locators (unchanged)
-  // ============================================================
-
+  // ---- locators ----
   _buildSelector(el) {
     const parts = [];
     let node = el;
@@ -573,7 +739,6 @@ class FormFieldExtractor {
   _getElementLocator(el) {
     const shadowHosts = [];
     const frames = [];
-
     let node = el;
     let root = node.getRootNode();
     while (root instanceof ShadowRoot) {
@@ -581,7 +746,6 @@ class FormFieldExtractor {
       node = root.host;
       root = node.getRootNode();
     }
-
     let win = el.ownerDocument.defaultView;
     while (win && win !== win.parent) {
       try {
@@ -593,14 +757,10 @@ class FormFieldExtractor {
         break;
       }
     }
-
     return { frames, shadowHosts, selector: this._buildSelector(el) };
   }
 
-  // ============================================================
-  // Fingerprinting (unchanged)
-  // ============================================================
-
+  // ---- fingerprint ----
   _fingerprint(el) {
     const path = this._getDomPath(el);
     const attrs = `${el.tagName}|${el.type || ""}|${el.name || ""}|${el.id || ""}`;
@@ -638,18 +798,13 @@ class FormFieldExtractor {
     return hash.toString(36);
   }
 
-  // ============================================================
-  // LLM fallback (unchanged)
-  // ============================================================
-
+  // ---- LLM fallback ----
   async _resolveAmbiguousLabels(fields) {
     if (!this.options.enableLLMFallback || typeof this.options.llmAnalyzer !== "function") {
       return fields;
     }
-
     const ambiguous = fields.filter((f) => !f.label || f.labelConfidence === "low");
     if (ambiguous.length === 0) return fields;
-
     const contexts = ambiguous.map((f) => ({
       key: f.key,
       tag: f.tagName,
@@ -659,7 +814,6 @@ class FormFieldExtractor {
       placeholder: f.placeholder,
       htmlSnippet: f.debugHtmlSnippet,
     }));
-
     try {
       const guesses = await this.options.llmAnalyzer(contexts);
       const guessMap = new Map(guesses.map((g) => [g.key, g]));
@@ -681,7 +835,7 @@ class FormFieldExtractor {
 }
 
 // ============================================================
-// Expose
+// Expose globally
 // ============================================================
 if (typeof window !== "undefined") {
   window.FormFieldExtractor = FormFieldExtractor;
@@ -689,4 +843,3 @@ if (typeof window !== "undefined") {
 if (typeof module !== "undefined" && module.exports) {
   module.exports = FormFieldExtractor;
 }
-

@@ -17,7 +17,7 @@ const FIELD_SELECTOR = [
 ].join(",\n  ");
 
 // ============================================================
-// FormFieldExtractor class (unchanged)
+// FormFieldExtractor – enhanced label detection
 // ============================================================
 class FormFieldExtractor {
   constructor(options = {}) {
@@ -368,13 +368,14 @@ class FormFieldExtractor {
     return true;
   }
 
-  // ---- label detection ----
+  // ---- label detection (enhanced with many strategies) ----
   _findLabelText(el) {
     const strategies = [
       ["for-attribute", () => this._getLabelViaForAttribute(el)],
       ["labels-property", () => this._getLabelViaLabelsProperty(el)],
       ["aria-labelledby", () => this._getLabelViaAriaLabelledby(el)],
       ["aria-label", () => el.getAttribute("aria-label")],
+      ["data-label", () => el.getAttribute("data-label") || el.getAttribute("data-question")],
       ["mui-wrapper", () => this._getMuiLabel(el)],
       ["antd-wrapper", () => this._getAntdLabel(el)],
       ["form-group", () => this._getFormGroupLabel(el)],
@@ -382,8 +383,15 @@ class FormFieldExtractor {
       ["table-cell", () => this._getTableCellLabel(el)],
       ["parent-text", () => this._getParentText(el)],
       ["nearby-text", () => this._getNearbyText(el)],
+      ["sibling-question", () => this._getSiblingQuestionText(el)],
+      ["wellfound-label", () => this._getWellfoundLabel(el)],
+      ["ancestor-question", () => this._getAncestorQuestionText(el)],
+      ["closest-question", () => this._getClosestQuestionText(el)],
+      ["label-sibling", () => this._getLabelSibling(el)],
+      ["container-heading", () => this._getContainerHeading(el)],
       ["placeholder", () => this._getPlaceholder(el)],
     ];
+
     for (const [source, fn] of strategies) {
       let text = null;
       try {
@@ -397,6 +405,111 @@ class FormFieldExtractor {
     return { text: null, source: null };
   }
 
+  // ---- new label extraction methods ----
+  _getClosestQuestionText(el) {
+    let node = el;
+    let depth = 0;
+    while (node && node.parentElement && depth < 10) {
+      const parent = node.parentElement;
+      const prevSiblings = Array.from(parent.children).filter((child) => child !== node);
+      for (let i = prevSiblings.length - 1; i >= 0; i--) {
+        const sib = prevSiblings[i];
+        const text = sib.textContent.trim();
+        if (text && text.includes("?") && text.length < 200) {
+          return text;
+        }
+      }
+      node = parent;
+      depth++;
+    }
+    return null;
+  }
+
+  _getLabelSibling(el) {
+    let node = el.previousElementSibling;
+    while (node) {
+      if (node.tagName === "LABEL") {
+        return node.textContent.trim();
+      }
+      const label = node.querySelector("label");
+      if (label) return label.textContent.trim();
+      node = node.previousElementSibling;
+    }
+    return null;
+  }
+
+  _getContainerHeading(el) {
+    const container = el.closest(
+      ".question, .field, .form-group, .form-field, [role='group'], fieldset, .MuiFormControl-root, .ant-form-item",
+    );
+    if (container) {
+      const headings = container.querySelectorAll("h1,h2,h3,h4,h5,h6,p,label,span");
+      for (const h of headings) {
+        if (!h.contains(el) && h.textContent.trim()) {
+          const text = h.textContent.trim();
+          if (text.length < 200) return text;
+        }
+      }
+      const clone = container.cloneNode(true);
+      clone.querySelectorAll("input, select, textarea, button").forEach((n) => n.remove());
+      const text = clone.textContent.trim();
+      if (text && text.length < 200) return text;
+    }
+    return null;
+  }
+
+  _getWellfoundLabel(el) {
+    const selectors = [
+      '[data-testid="question"]',
+      ".question",
+      ".question-text",
+      ".form-question",
+      ".input-label",
+      ".field-label",
+      ".label",
+      "[data-question]",
+      "[aria-label]",
+    ];
+    const container = el.closest(selectors.join(","));
+    if (container) {
+      const text = container.textContent.trim();
+      if (text) return text;
+    }
+    return null;
+  }
+
+  _getSiblingQuestionText(el) {
+    let node = el.previousElementSibling;
+    while (node) {
+      const text = node.textContent.trim();
+      if (text && text.includes("?")) {
+        return text;
+      }
+      const children = node.querySelectorAll("*");
+      for (const child of children) {
+        const childText = child.textContent.trim();
+        if (childText && childText.includes("?")) {
+          return childText;
+        }
+      }
+      node = node.previousElementSibling;
+    }
+    return null;
+  }
+
+  _getAncestorQuestionText(el) {
+    let ancestor = el.parentElement;
+    for (let i = 0; i < 6 && ancestor; i++) {
+      const text = ancestor.textContent.trim();
+      if (text && text.includes("?") && text.length < 200) {
+        return text;
+      }
+      ancestor = ancestor.parentElement;
+    }
+    return null;
+  }
+
+  // ---- existing label helpers ----
   _cleanLabelText(text) {
     if (!text) return null;
     const collapsed = text.toString().trim().replace(/\s+/g, " ");
@@ -1336,7 +1449,64 @@ function fillInputField(element, value) {
   element.dispatchEvent(new Event("change", { bubbles: true }));
 }
 
-// ---- prompt for missing values ----
+// ---- Helper: generate user‑friendly label and placeholder ----
+function getDisplayLabelAndPlaceholder(field) {
+  // Start with the best available label
+  let label = field.label || field.placeholder || field.name || field.id || field.key || "Field";
+
+  // If label looks like an ID (underscores, no spaces, starts with custom/field/question), try placeholder
+  const isIdLike =
+    /^custom|^question|^field_|^input_|^text_|^select_/i.test(label) ||
+    (label.includes("_") && !label.includes(" "));
+  const placeholder = field.placeholder && field.placeholder.trim();
+  if (isIdLike && placeholder && placeholder.includes(" ")) {
+    label = placeholder;
+  }
+
+  // Clean up: replace underscores and camelCase with spaces
+  label = label
+    .replace(/_/g, " ")
+    .replace(/([a-z])([A-Z])/g, "$1 $2")
+    .trim();
+  // Capitalize first letter
+  label = label.charAt(0).toUpperCase() + label.slice(1);
+
+  // For the placeholder, use the actual placeholder if available, otherwise generate contextual
+  let placeholderText = placeholder || "";
+  if (!placeholderText) {
+    const type = field.type || "";
+    const lowerLabel = label.toLowerCase();
+    if (type === "email" || lowerLabel.includes("email")) {
+      placeholderText = "e.g., you@example.com";
+    } else if (
+      type === "tel" ||
+      type === "phone" ||
+      lowerLabel.includes("phone") ||
+      lowerLabel.includes("mobile")
+    ) {
+      placeholderText = "e.g., +1 234 567 8900";
+    } else if (type === "number" || lowerLabel.includes("number") || lowerLabel.includes("age")) {
+      placeholderText = "e.g., 10";
+    } else if (type === "date" || lowerLabel.includes("date") || lowerLabel.includes("birth")) {
+      placeholderText = "e.g., 2024-12-31";
+    } else if (
+      type === "url" ||
+      lowerLabel.includes("linkedin") ||
+      lowerLabel.includes("website")
+    ) {
+      placeholderText = "e.g., https://linkedin.com/in/yourprofile";
+    } else if (lowerLabel.includes("name")) {
+      placeholderText = "e.g., John Doe";
+    } else if (lowerLabel.includes("city") || lowerLabel.includes("location")) {
+      placeholderText = "e.g., New York";
+    } else {
+      placeholderText = `Enter ${label}`;
+    }
+  }
+  return { displayLabel: label, placeholderText: placeholderText };
+}
+
+// ---- prompt for missing values (IMPROVED) ----
 async function promptForMissingValues(missingFields, profileData) {
   return new Promise((resolve) => {
     const sidebar = getOrCreateSidebar();
@@ -1345,20 +1515,20 @@ async function promptForMissingValues(missingFields, profileData) {
     const style = document.createElement("style");
     style.textContent = `
       .aa-inline-modal {
-  position: absolute;
-  top: 78px;
-  right: 0;
-  bottom: 0;
-  left: 0;
-  background: linear-gradient(135deg, #ffffff 0%, #f8f9fa 100%);
-  z-index: 20;
-  display: flex;
-  flex-direction: column;
-  overflow: hidden;
-  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
-  animation: aaFadeIn 0.2s ease-out;
-  box-shadow: 0 -8px 20px rgba(15, 23, 42, 0.08);
-}
+        position: absolute;
+        top: 78px;
+        right: 0;
+        bottom: 0;
+        left: 0;
+        background: linear-gradient(135deg, #ffffff 0%, #f8f9fa 100%);
+        z-index: 20;
+        display: flex;
+        flex-direction: column;
+        overflow: hidden;
+        font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+        animation: aaFadeIn 0.2s ease-out;
+        box-shadow: 0 -8px 20px rgba(15, 23, 42, 0.08);
+      }
       @keyframes aaFadeIn {
         from { opacity: 0; transform: translateY(8px); }
         to { opacity: 1; transform: translateY(0); }
@@ -1402,12 +1572,11 @@ async function promptForMissingValues(missingFields, profileData) {
         gap: 4px;
         position: relative;
         z-index: 5;
-
-        scrollbar-width: none;      /* Firefox */
-        -ms-overflow-style: none;   /* old Edge/IE */
+        scrollbar-width: none;
+        -ms-overflow-style: none;
       }
       .aa-inline-modal-form::-webkit-scrollbar {
-        display: none;               /* Chrome/Safari/new Edge */
+        display: none;
       }
       .aa-form-field { margin-bottom: 14px; }
       .aa-form-field label {
@@ -1623,7 +1792,10 @@ ${applicantContext}
       }
     }
 
+    // ---- Build form fields with improved helper ----
     missingFields.forEach((field) => {
+      const { displayLabel, placeholderText } = getDisplayLabelAndPlaceholder(field);
+
       const wrapper = document.createElement("div");
       wrapper.className = "aa-field-wrapper";
 
@@ -1631,14 +1803,27 @@ ${applicantContext}
       fieldContainer.className = "aa-form-field";
 
       const label = document.createElement("label");
-      label.textContent = field.label || field.placeholder || field.key;
+      label.textContent = displayLabel;
       label.htmlFor = field.key;
 
       const input = document.createElement("input");
-      input.type = "text";
       input.id = field.key;
       input.name = field.key;
-      input.placeholder = `Enter ${field.label || field.placeholder || field.key}`;
+      input.placeholder = placeholderText;
+
+      // Set input type based on field.type
+      const typeMap = {
+        email: "email",
+        tel: "tel",
+        phone: "tel",
+        number: "number",
+        date: "date",
+        url: "url",
+        time: "time",
+        month: "month",
+        week: "week",
+      };
+      input.type = typeMap[field.type] || "text";
 
       fieldContainer.appendChild(label);
       fieldContainer.appendChild(input);
@@ -1651,7 +1836,6 @@ ${applicantContext}
         <span class="aa-ai-btn-spinner"></span>
         <span class="aa-ai-btn-label">🤖 AI</span>
       `;
-      const aiBtnLabel = aiBtn.querySelector(".aa-ai-btn-label");
 
       aiBtn.addEventListener("click", async (e) => {
         e.preventDefault();
