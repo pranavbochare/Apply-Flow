@@ -70,24 +70,21 @@ applyBtn.addEventListener("click", async () => {
       },
       (response) => {
         if (chrome.runtime.lastError) {
-          showMessage(
-            `Error: ${chrome.runtime.lastError.message}. Make sure you're on a valid job application page.`,
-            true,
-          );
+          showMessage("Make sure you're on a valid job application page. Please try again", true);
           applyBtn.disabled = false;
           applyBtn.classList.remove("is-loading");
           if (buttonLabel) {
             buttonLabel.textContent = "Start Auto Apply";
           }
         } else if (response?.success) {
-          showMessage(response.message || "Application auto-filled successfully!", false);
+          showMessage("Application auto-filled successfully!", false);
           applyBtn.disabled = false;
           applyBtn.classList.remove("is-loading");
           if (buttonLabel) {
             buttonLabel.textContent = "Start Auto Apply";
           }
         } else {
-          showMessage(`Error: ${response?.error || "Failed to auto-fill application"}`, true);
+          showMessage("Failed to auto-fill application. Please try again", true);
           applyBtn.disabled = false;
           applyBtn.classList.remove("is-loading");
           if (buttonLabel) {
@@ -97,7 +94,7 @@ applyBtn.addEventListener("click", async () => {
       },
     );
   } catch (error) {
-    showMessage(error.message || "Failed to start auto-apply", true);
+    showMessage("Failed to start auto-apply, Please try again", true);
     applyBtn.disabled = false;
     applyBtn.classList.remove("is-loading");
     if (applyBtn.querySelector(".button-label")) {

@@ -584,7 +584,7 @@ async function handleResumeUpload(file) {
 
     fillProfileForm(profileData);
   } catch (error) {
-    showMessage(error.message || "Resume upload failed.", true);
+    showMessage("Resume upload failed. Please try again.", true);
   } finally {
     setLoadingState(false);
   }
