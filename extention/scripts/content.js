@@ -1575,6 +1575,11 @@ async function promptForMissingValues(missingFields, profileData) {
         font-weight: 600;
         color: #2c3e50;
         font-size: 13px;
+        word-wrap: break-word !important;
+        overflow-wrap: break-word !important;
+        line-height: 1.4 !important;
+        max-width: 100% !important;
+        white-space: normal !important;
       }
       .aa-form-field input {
         width: 100%;
