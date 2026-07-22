@@ -759,13 +759,29 @@ initializeDynamicLocationAndPhoneControls().then(() => {
 });
 
 function validateProfile(profileData) {
-  // All fields required
+  // Fields that belong to the employment section
+  const employmentFields = [
+    "currentCompany",
+    "currentTitle",
+    "currentlyWorking",
+    "expectedSalary",
+    "noticePeriod",
+  ];
+
+  // ---- Required fields (skip employment if no experience) ----
   for (const field of Object.keys(profileFields)) {
-    if (!profileData[field]?.trim() && field !== "portfolioUrl" && field !== "phoneCountryCode") {
+    // Always skip portfolioUrl and phoneCountryCode (as before)
+    if (field === "portfolioUrl" || field === "phoneCountryCode") continue;
+
+    // Skip employment fields if hasExperience is not "Yes"
+    if (employmentFields.includes(field) && profileData.hasExperience !== "Yes") continue;
+
+    if (!profileData[field]?.trim()) {
       return `${field} is required`;
     }
   }
 
+  // ---- Format validations (only if the field has a value) ----
   // Email
   if (profileData.email && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(profileData.email)) {
     return "Invalid email address";
@@ -794,7 +810,6 @@ function validateProfile(profileData) {
   // CGPA
   if (profileData.cgpa) {
     const cgpa = Number(profileData.cgpa);
-
     if (isNaN(cgpa) || cgpa < 0 || cgpa > 10) {
       return "CGPA must be between 0 and 10";
     }
@@ -805,16 +820,22 @@ function validateProfile(profileData) {
     return "Invalid Postal Code";
   }
 
-  // Dropdown validations
+  // ---- Dropdown value checks (only when the field is relevant) ----
   if (!["Male", "Female", "Other", "Prefer not to say"].includes(profileData.gender)) {
     return "Please select a valid Gender";
   }
 
-  if (!["Yes", "No"].includes(profileData.currentlyWorking)) {
+  // currentlyWorking: only validate if hasExperience is "Yes"
+  if (
+    profileData.hasExperience === "Yes" &&
+    !["Yes", "No"].includes(profileData.currentlyWorking)
+  ) {
     return "Please select Currently Working";
   }
 
+  // noticePeriod: only validate if hasExperience is "Yes"
   if (
+    profileData.hasExperience === "Yes" &&
     !["Immediate", "15 Days", "30 Days", "45 Days", "60 Days", "90 Days"].includes(
       profileData.noticePeriod,
     )
