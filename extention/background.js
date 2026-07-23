@@ -68,7 +68,34 @@ chrome.runtime.onInstalled.addListener((details) => {
   }
 });
 
+const tabStatusMap = new Map();
+
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
+  if (message.type === "SUPPORT_STATUS") {
+    const tabId = sender.tab.id;
+    // Store status for this tab
+    tabStatusMap.set(tabId, {
+      supported: message.supported,
+      fieldCount: message.fieldCount,
+      timestamp: Date.now(),
+    });
+
+    // Update the extension badge (icon) for this tab
+    const text = message.supported ? "✓" : "✗";
+    const color = message.supported ? "#4CAF50" : "#F44336";
+    chrome.action.setBadgeText({ tabId, text });
+    chrome.action.setBadgeBackgroundColor({ tabId, color });
+    return; // no response needed
+  }
+
+  // 2. Popup asks for the status of a specific tab
+  if (message.type === "GET_SUPPORT_STATUS") {
+    const tabId = message.tabId;
+    const status = tabStatusMap.get(tabId) || null;
+    sendResponse({ status });
+    return true; // keep channel open for async response
+  }
+
   if (message?.type === "GET_API_SETTINGS") {
     chrome.storage.local.get(["apiKey", "model"], (result) => {
       sendResponse({ apiKey: result.apiKey || "", model: result.model || "" });

@@ -108,3 +108,51 @@ function showMessage(text, isError = false) {
   messageEl.textContent = text;
   messageEl.style.color = isError ? "#b00020" : "#0b6623";
 }
+
+async function updateSupportStatusDisplay() {
+  const el = document.getElementById("support-status");
+  if (!el) return;
+
+  try {
+    // Get the currently active tab
+    const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
+    if (!tab) {
+      el.textContent = "⏳ No active tab";
+      el.style.background = "#f0f4ff";
+      el.style.color = "#1a3a6b";
+      return;
+    }
+
+    // Ask background for this tab's support status
+    const response = await chrome.runtime.sendMessage({
+      type: "GET_SUPPORT_STATUS",
+      tabId: tab.id,
+    });
+
+    const status = response?.status;
+
+    if (!status) {
+      el.textContent = "⏳ Checking support...";
+      el.style.background = "#f0f4ff";
+      el.style.color = "#1a3a6b";
+      return;
+    }
+
+    if (status.supported) {
+      el.textContent = "supported on this page";
+      el.style.background = "#e8f5e9";
+      el.style.color = "#1e5e2e";
+    } else {
+      el.textContent = "Not supported on this page";
+      el.style.background = "#fbe9e7";
+      el.style.color = "#8d2e1c";
+    }
+  } catch (err) {
+    el.textContent = "⚠️ Error loading status";
+    el.style.background = "#fff3cd";
+    el.style.color = "#856404";
+  }
+}
+
+// Update when popup opens
+document.addEventListener("DOMContentLoaded", updateSupportStatusDisplay);

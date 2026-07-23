@@ -2620,6 +2620,67 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   return true;
 });
 
+function checkSupportAndUpdateUI() {
+  try {
+    const fields = typeof extractFormFields === "function" ? extractFormFields() : [];
+    const supported = Array.isArray(fields) && fields.length > 0;
+    const fieldCount = fields ? fields.length : 0;
+
+    // Send to background (which stores per tab and updates badge)
+    chrome.runtime
+      .sendMessage({
+        type: "SUPPORT_STATUS",
+        supported: supported,
+        fieldCount: fieldCount,
+      })
+      .catch(() => {});
+  } catch (err) {
+    // On error, mark as not supported
+    chrome.runtime
+      .sendMessage({
+        type: "SUPPORT_STATUS",
+        supported: false,
+        fieldCount: 0,
+      })
+      .catch(() => {});
+  }
+}
+
+// ---- Debounce helper ----
+let supportCheckTimeout = null;
+function debouncedSupportCheck() {
+  if (supportCheckTimeout) clearTimeout(supportCheckTimeout);
+  supportCheckTimeout = setTimeout(() => {
+    supportCheckTimeout = null;
+    checkSupportAndUpdateUI();
+  }, 300);
+}
+
+// ---- Initial check ----
+setTimeout(checkSupportAndUpdateUI, 600);
+
+// ---- Watch for DOM changes ----
+const supportObserver = new MutationObserver(() => {
+  debouncedSupportCheck();
+});
+supportObserver.observe(document.body, {
+  childList: true,
+  subtree: true,
+  attributes: false,
+});
+
+// ---- Re-check when window loads ----
+window.addEventListener("load", () => {
+  setTimeout(checkSupportAndUpdateUI, 1000);
+});
+
+// ---- Re-check when tab becomes visible ----
+document.addEventListener("visibilitychange", () => {
+  if (!document.hidden) {
+    setTimeout(checkSupportAndUpdateUI, 300);
+  }
+});
+
 // ---- initialize bot ----
 createFloatingBot();
 injectAutoApplyGlobalStyles();
