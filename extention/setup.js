@@ -584,7 +584,10 @@ async function handleResumeUpload(file) {
 
     fillProfileForm(profileData);
   } catch (error) {
-    showMessage("Resume upload failed. Please try again.", true);
+    showMessage(
+      "Resume upload failed. Please configure your AI model and API key, then try again.",
+      true,
+    );
   } finally {
     setLoadingState(false);
   }
@@ -698,7 +701,6 @@ function saveProfile() {
 
   Object.keys(profileFields).forEach((key) => {
     const element = document.getElementById(key);
-
     if (element) {
       profileData[key] = element.value?.trim() || "";
     }
@@ -706,6 +708,7 @@ function saveProfile() {
 
   const status = document.getElementById("statusMessage");
 
+  // Validate profile fields
   const error = validateProfile(profileData);
   if (error) {
     if (status) {
@@ -715,39 +718,57 @@ function saveProfile() {
     return;
   }
 
-  setLoadingState(
-    true,
-    "Saving your profile",
-    "Please wait while your setup is being stored securely.",
-  );
-
-  chrome.storage.local.set(
-    {
-      profileData,
-      setupCompleted: true,
-    },
-    () => {
-      if (chrome.runtime.lastError) {
+  // Validate that a resume has been uploaded
+  resumeExistsInIndexedDB()
+    .then((exists) => {
+      if (!exists) {
         if (status) {
-          status.textContent = "Failed to save profile.";
+          status.textContent = "Resume upload is required. Please upload your resume.";
           status.style.color = "red";
         }
-        setLoadingState(false);
         return;
       }
 
-      if (status) {
-        status.textContent = "Profile saved successfully.";
-        status.style.color = "green";
-      }
+      // Proceed to save
+      setLoadingState(
+        true,
+        "Saving your profile",
+        "Please wait while your setup is being stored securely.",
+      );
 
-      // Keep the loader visible briefly so the save action feels consistent
-      setTimeout(() => {
-        setLoadingState(false);
-        window.close();
-      }, 900);
-    },
-  );
+      chrome.storage.local.set(
+        {
+          profileData,
+          setupCompleted: true,
+        },
+        () => {
+          if (chrome.runtime.lastError) {
+            if (status) {
+              status.textContent = "Failed to save profile.";
+              status.style.color = "red";
+            }
+            setLoadingState(false);
+            return;
+          }
+
+          if (status) {
+            status.textContent = "Profile saved successfully.";
+            status.style.color = "green";
+          }
+
+          setTimeout(() => {
+            setLoadingState(false);
+            window.close();
+          }, 900);
+        },
+      );
+    })
+    .catch((err) => {
+      if (status) {
+        status.textContent = "Error checking resume: " + err.message;
+        status.style.color = "red";
+      }
+    });
 }
 
 saveProfileBtn?.addEventListener("click", saveProfile);
@@ -759,29 +780,27 @@ initializeDynamicLocationAndPhoneControls().then(() => {
 });
 
 function validateProfile(profileData) {
-  // Fields that belong to the employment section
-  const employmentFields = [
-    "currentCompany",
-    "currentTitle",
-    "currentlyWorking",
-    "expectedSalary",
-    "noticePeriod",
+  // Mandatory fields (only these are required)
+  const requiredFields = [
+    "firstName",
+    "lastName",
+    "email",
+    "phone",
+    "phoneCountryCode",
+    "country",
+    "linkedinUrl",
+    "degree",
+    "institution",
+    "graduationYear",
   ];
 
-  // ---- Required fields (skip employment if no experience) ----
-  for (const field of Object.keys(profileFields)) {
-    // Always skip portfolioUrl and phoneCountryCode (as before)
-    if (field === "portfolioUrl" || field === "phoneCountryCode") continue;
-
-    // Skip employment fields if hasExperience is not "Yes"
-    if (employmentFields.includes(field) && profileData.hasExperience !== "Yes") continue;
-
+  // Check required fields
+  for (const field of requiredFields) {
     if (!profileData[field]?.trim()) {
       return `${field} is required`;
     }
   }
 
-  // ---- Format validations (only if the field has a value) ----
   // Email
   if (profileData.email && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(profileData.email)) {
     return "Invalid email address";
@@ -797,7 +816,7 @@ function validateProfile(profileData) {
     return "Invalid LinkedIn URL";
   }
 
-  // GitHub
+  // GitHub (optional) – only validate if provided
   if (profileData.githubUrl && !profileData.githubUrl.includes("github.com")) {
     return "Invalid GitHub URL";
   }
@@ -807,7 +826,7 @@ function validateProfile(profileData) {
     return "Graduation Year must be a 4-digit year";
   }
 
-  // CGPA
+  // CGPA (optional)
   if (profileData.cgpa) {
     const cgpa = Number(profileData.cgpa);
     if (isNaN(cgpa) || cgpa < 0 || cgpa > 10) {
@@ -815,27 +834,32 @@ function validateProfile(profileData) {
     }
   }
 
-  // Postal Code
+  // Postal Code (optional)
   if (profileData.postalCode && !/^[a-zA-Z0-9\s-]{4,10}$/.test(profileData.postalCode)) {
     return "Invalid Postal Code";
   }
 
-  // ---- Dropdown value checks (only when the field is relevant) ----
-  if (!["Male", "Female", "Other", "Prefer not to say"].includes(profileData.gender)) {
+  // Gender (optional) – if provided, must be valid
+  if (
+    profileData.gender &&
+    !["Male", "Female", "Other", "Prefer not to say"].includes(profileData.gender)
+  ) {
     return "Please select a valid Gender";
   }
 
-  // currentlyWorking: only validate if hasExperience is "Yes"
+  // currentlyWorking (optional) – if provided, must be valid (only if hasExperience is Yes)
   if (
     profileData.hasExperience === "Yes" &&
+    profileData.currentlyWorking &&
     !["Yes", "No"].includes(profileData.currentlyWorking)
   ) {
     return "Please select Currently Working";
   }
 
-  // noticePeriod: only validate if hasExperience is "Yes"
+  // noticePeriod (optional) – if provided, must be valid (only if hasExperience is Yes)
   if (
     profileData.hasExperience === "Yes" &&
+    profileData.noticePeriod &&
     !["Immediate", "15 Days", "30 Days", "45 Days", "60 Days", "90 Days"].includes(
       profileData.noticePeriod,
     )
@@ -843,15 +867,21 @@ function validateProfile(profileData) {
     return "Please select a valid Notice Period";
   }
 
-  if (!["Remote", "Hybrid", "Onsite"].includes(profileData.preferredWorkMode)) {
+  // preferredWorkMode (optional) – if provided, must be valid
+  if (
+    profileData.preferredWorkMode &&
+    !["Remote", "Hybrid", "Onsite"].includes(profileData.preferredWorkMode)
+  ) {
     return "Please select a valid Work Mode";
   }
 
-  if (!["Yes", "No"].includes(profileData.willingToRelocate)) {
+  // willingToRelocate (optional) – if provided, must be valid
+  if (profileData.willingToRelocate && !["Yes", "No"].includes(profileData.willingToRelocate)) {
     return "Please select Relocation Preference";
   }
 
-  if (!["Yes", "No"].includes(profileData.requiresSponsorship)) {
+  // requiresSponsorship (optional) – if provided, must be valid
+  if (profileData.requiresSponsorship && !["Yes", "No"].includes(profileData.requiresSponsorship)) {
     return "Please select Sponsorship Requirement";
   }
 
